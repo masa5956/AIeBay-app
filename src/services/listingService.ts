@@ -1,5 +1,5 @@
 import type { CompetitorSuggestions, ConditionAssessment, MarketTrend, ProductAspect, ProductData } from '../types/listing';
-import type { RecentListing, SalesSummary } from '../types/app';
+import type { AnalyticsData, RecentListing, SalesSummary } from '../types/app';
 import { mockProductData } from '../mock/mockData';
 
 const BACKEND_URL = `${import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001'}/api`;
@@ -146,6 +146,15 @@ export const getListings = async (): Promise<{ recentListings: RecentListing[]; 
   const response = await fetch(`${BACKEND_URL}/listings`);
   if (!response.ok) {
     throw new Error('出品履歴の取得に失敗しました');
+  }
+  return await response.json();
+};
+
+// 5. 分析タブ向けの月別出品額推移・カテゴリ別出品額構成をバックエンド(DB)から取得する
+export const getAnalytics = async (): Promise<AnalyticsData> => {
+  const response = await fetch(`${BACKEND_URL}/analytics`);
+  if (!response.ok) {
+    throw new Error('分析データの取得に失敗しました');
   }
   return await response.json();
 };

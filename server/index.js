@@ -15,7 +15,7 @@ import { updateEnvValue } from './envFile.js';
 import { AI_PROVIDER, generateImageJson } from './aiProvider.js';
 import { runConditionAgent, runMarketTrendAgent, runCompetitorAgent, scoreListing } from './analysisAgents.js';
 import { supabase, PRODUCT_IMAGES_BUCKET } from './supabaseClient.js';
-import { saveListing, getRecentListings, getSalesSummary } from './listingsRepository.js';
+import { saveListing, getRecentListings, getSalesSummary, getAnalytics } from './listingsRepository.js';
 
 dotenv.config();
 
@@ -343,6 +343,7 @@ app.post('/api/publish-ebay', async (req, res) => {
     const listingId = publishResponse.data.listingId;
 
     // 出品履歴をDBに保存（失敗しても出品自体は成功しているため、ログのみでレスポンスは成功として返す）
+    // カテゴリ別集計用に、商品仕様の"Type"（種類）をカテゴリとして流用する
     try {
       await saveListing({
         sku,
@@ -350,6 +351,7 @@ app.post('/api/publish-ebay', async (req, res) => {
         title: productData.title,
         price: productData.pricing.suggestedPrice,
         imageUrl,
+        category: aspects.Type?.[0] || 'Other',
       });
     } catch (dbError) {
       console.error('出品履歴の保存に失敗しました:', dbError);
@@ -388,6 +390,19 @@ app.get('/api/listings', async (req, res) => {
   } catch (error) {
     console.error('出品履歴の取得に失敗しました:', error);
     return res.status(500).json({ error: '出品履歴の取得に失敗しました。' });
+  }
+});
+
+// =================================================================
+// 分析タブ向けエンドポイント (/api/analytics)
+// =================================================================
+app.get('/api/analytics', async (req, res) => {
+  try {
+    const analytics = await getAnalytics();
+    return res.json(analytics);
+  } catch (error) {
+    console.error('分析データの取得に失敗しました:', error);
+    return res.status(500).json({ error: '分析データの取得に失敗しました。' });
   }
 });
 

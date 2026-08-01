@@ -1,7 +1,7 @@
 import { supabase } from './supabaseClient.js';
 
 // 出品成功時にlistingsテーブルへ1件保存する
-export async function saveListing({ sku, listingId, title, price, imageUrl }) {
+export async function saveListing({ sku, listingId, title, price, imageUrl, category }) {
   if (!supabase) return; // Supabase未設定時は履歴保存をスキップ（出品自体は成功させる）
   const { error } = await supabase.from('listings').insert({
     sku,
@@ -10,6 +10,7 @@ export async function saveListing({ sku, listingId, title, price, imageUrl }) {
     price,
     status: 'ACTIVE',
     image_url: imageUrl || null,
+    category: category || 'Other',
   });
   if (error) throw error;
 }
@@ -59,4 +60,46 @@ export async function getSalesSummary() {
   }
 
   return { totalRevenue, monthlyRevenue, activeListingsCount, soldItemsCount };
+}
+
+// 分析タブ向け: 月別出品額推移(直近6ヶ月)・カテゴリ別出品額構成を集計する。
+// 注意: 売却済みかどうかを問わず「出品された時点の金額」を集計している
+// （売却検知の仕組みが無いため、実際の売上ではなく出品アクティビティの実データ）。
+export async function getAnalytics() {
+  const empty = { monthlyTrend: [], categoryBreakdown: [] };
+  if (!supabase) return empty;
+
+  const { data, error } = await supabase.from('listings').select('price, category, created_at');
+  if (error) throw error;
+
+  // 直近6ヶ月分の枠を先に用意しておく（出品が無い月も0件で表示するため）
+  const now = new Date();
+  const monthlyMap = new Map();
+  for (let i = 5; i >= 0; i -= 1) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    monthlyMap.set(key, 0);
+  }
+
+  const categoryMap = new Map();
+
+  for (const row of data) {
+    const price = Number(row.price) || 0;
+    const createdAt = new Date(row.created_at);
+    const monthKey = `${createdAt.getFullYear()}-${String(createdAt.getMonth() + 1).padStart(2, '0')}`;
+    if (monthlyMap.has(monthKey)) {
+      monthlyMap.set(monthKey, monthlyMap.get(monthKey) + price);
+    }
+
+    const category = row.category || 'Other';
+    categoryMap.set(category, (categoryMap.get(category) || 0) + price);
+  }
+
+  const monthlyTrend = Array.from(monthlyMap.entries()).map(([month, value]) => ({ month, value }));
+  const categoryBreakdown = Array.from(categoryMap.entries())
+    .map(([category, value]) => ({ category, value }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 6);
+
+  return { monthlyTrend, categoryBreakdown };
 }

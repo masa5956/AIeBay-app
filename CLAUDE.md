@@ -46,8 +46,10 @@ npm run setup:policies # eBay Business Policies・出荷元ロケーションの
     無いうちはStep2以降へ移動不可）。
   - ホーム（[HomeDashboard.tsx](src/components/HomeDashboard.tsx)、`App.tsx`がマウント時に`getListings()`で
     バックエンド/Supabaseから取得した売上サマリー・最近の出品を表示。出品成功時は`refreshListings()`で再取得）、
-    分析（[AnalyticsPanel.tsx](src/components/AnalyticsPanel.tsx)、rechartsによる売上推移・カテゴリ別グラフ。
-    現状はダミーデータ）、設定（[SettingsPanel.tsx](src/components/SettingsPanel.tsx)、言語切替スイッチと、
+    分析（[AnalyticsPanel.tsx](src/components/AnalyticsPanel.tsx)、マウント時に`getAnalytics()`でSupabaseの
+    実出品データから集計した月別出品額推移・カテゴリ別出品額構成をrechartsで表示。**売却済みかどうかは反映されず、
+    あくまで出品時点の金額ベースの集計**である旨をUI上にも明示している）、
+    設定（[SettingsPanel.tsx](src/components/SettingsPanel.tsx)、言語切替スイッチと、
     開発者向けの「AI解析をモックデータで代用」トグルを含む。ONの間は`analyzeImageWithAI`の代わりに
     `mockAnalyzeImage`を使い、Gemini/Groqのクォータを消費せずに出品(`publishToEbay`は実API)を繰り返し検証できる）。
   - 完了・失敗通知は [Toast.tsx](src/components/Toast.tsx)、出品キャンセル確認は
@@ -93,6 +95,9 @@ npm run setup:policies # eBay Business Policies・出荷元ロケーションの
     `listings`テーブルに出品履歴を保存する（保存失敗は出品自体の成否には影響させずログのみ出力）。
   - `GET /api/listings` : Supabaseの`listings`テーブルから最近の出品一覧（新しい順）と売上サマリーを取得して返す。
     ホーム画面のダッシュボード表示に使用（`App.tsx`がマウント時と出品成功後に呼び出す）。
+  - `GET /api/analytics` : `listings`テーブルから月別出品額推移（直近6ヶ月、出品が無い月も0円で埋める）と
+    カテゴリ別出品額構成（上位6件）を集計して返す。分析タブ（[AnalyticsPanel.tsx](src/components/AnalyticsPanel.tsx)）
+    が表示に使用。
   - `GET /api/ebay/auth-url` : eBayユーザー同意画面のURLを発行する（初回セットアップ用）。
   - `GET /api/ebay/callback` : 同意後にeBayからリダイレクトされ、認可コードを`refresh_token`に交換して
     `.env`の`EBAY_USER_REFRESH_TOKEN`に自動保存する。
@@ -129,10 +134,12 @@ npm run setup:policies # eBay Business Policies・出荷元ロケーションの
   `SUPABASE_SERVICE_ROLE_KEY`を使うバックエンド専用の管理者権限クライアント）と、商品画像用ストレージ
   バケット名`PRODUCT_IMAGES_BUCKET`（`'product-images'`）を集約。
 - **[server/listingsRepository.js](server/listingsRepository.js)**: Supabase Postgresの`listings`テーブルへの
-  読み書きを集約。`saveListing()`（出品成功時の1件保存）、`getRecentListings()`（新しい順取得）、
-  `getSalesSummary()`（売上サマリー集計。**現状「売却済み(SOLD)」へのステータス更新の仕組みが無いため、
-  全出品はACTIVEのまま記録され続け、totalRevenue/monthlyRevenue/soldItemsCountは常に0になる**）を提供。
-  テーブルスキーマは`.env.example`のコメントまたはSupabaseのSQL Editorで以下を実行して作成する:
+  読み書きを集約。`saveListing()`（出品成功時の1件保存。商品仕様の"Type"を`category`として流用保存）、
+  `getRecentListings()`（新しい順取得）、`getSalesSummary()`（売上サマリー集計。**現状「売却済み(SOLD)」への
+  ステータス更新の仕組みが無いため、全出品はACTIVEのまま記録され続け、totalRevenue/monthlyRevenue/
+  soldItemsCountは常に0になる**）、`getAnalytics()`（月別出品額推移・カテゴリ別出品額構成。同様に売却実績では
+  なく出品時点の金額ベース）を提供。
+  テーブルスキーマはSupabaseのSQL Editorで以下を実行して作成する:
   ```sql
   create table public.listings (
     id uuid primary key default gen_random_uuid(),
@@ -142,6 +149,7 @@ npm run setup:policies # eBay Business Policies・出荷元ロケーションの
     price numeric not null,
     status text not null default 'ACTIVE',
     image_url text,
+    category text not null default 'Other',
     created_at timestamptz not null default now()
   );
   ```
