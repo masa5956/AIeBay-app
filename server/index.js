@@ -203,6 +203,12 @@ app.post('/api/publish-ebay', async (req, res) => {
     const merchantLocationKey = process.env.EBAY_MERCHANT_LOCATION_KEY || 'DEFAULT_LOCATION';
     const categoryId = productData.categoryId || '112529'; // カテゴリー未指定時のフォールバック（テスト用ID）
 
+    // AIが生成したconditionがeBayの許容する4値のいずれとも一致しない場合に備え、
+    // 不正な値はデフォルトにフォールバックする（Inventory APIが「conditionがカテゴリに対し無効」として
+    // 出品全体を拒否するのを防ぐため）
+    const VALID_CONDITIONS = ['NEW', 'USED_EXCELLENT', 'USED_GOOD', 'USED_FAIR'];
+    const condition = VALID_CONDITIONS.includes(productData.condition) ? productData.condition : 'USED_EXCELLENT';
+
     // NOTE: 画像ホスティング未実装のため、フロントエンドが送ってくるblob:はeBayから取得不可。
     // http(s)で始まらないURLはプレースホルダー画像にフォールバックする（暫定対応）。
     const imageUrl = typeof productData.imageUrl === 'string' && productData.imageUrl.startsWith('http')
@@ -238,7 +244,7 @@ app.post('/api/publish-ebay', async (req, res) => {
           description: productData.description,
           imageUrls: [imageUrl],
         },
-        condition: productData.condition || 'USED_EXCELLENT',
+        condition,
         availability: {
           shipToLocationAvailability: { quantity: 1 },
         },
