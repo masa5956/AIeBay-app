@@ -1,4 +1,5 @@
 import type { CompetitorSuggestions, ConditionAssessment, MarketTrend, ProductAspect, ProductData } from '../types/listing';
+import type { RecentListing, SalesSummary } from '../types/app';
 import { mockProductData } from '../mock/mockData';
 
 const BACKEND_URL = `${import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001'}/api`;
@@ -60,7 +61,8 @@ export const analyzeImageWithAI = async (imageFile: File): Promise<ProductData> 
   );
 
   return {
-    imageUrl: URL.createObjectURL(imageFile),
+    // Supabase Storageへのアップロードに成功していれば公開URL、失敗時のみローカルのblob:にフォールバック
+    imageUrl: aiResult.imageUrl || URL.createObjectURL(imageFile),
     title,
     brand: aiResult.brand || '',
     model: aiResult.model || '',
@@ -136,5 +138,14 @@ export const publishToEbay = async (productData: ProductData): Promise<{ success
     throw new Error('eBay出品処理に失敗しました');
   }
 
+  return await response.json();
+};
+
+// 4. 最近の出品一覧・売上サマリーをバックエンド(DB)から取得する
+export const getListings = async (): Promise<{ recentListings: RecentListing[]; salesSummary: SalesSummary }> => {
+  const response = await fetch(`${BACKEND_URL}/listings`);
+  if (!response.ok) {
+    throw new Error('出品履歴の取得に失敗しました');
+  }
   return await response.json();
 };

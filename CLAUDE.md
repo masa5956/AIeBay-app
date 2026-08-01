@@ -44,9 +44,12 @@ npm run setup:policies # eBay Business Policies・出荷元ロケーションの
     [Step4_Preview.tsx](src/components/Step4_Preview.tsx)（最終確認・出品）。
     ステップ間の移動は [StepperHeader.tsx](src/components/StepperHeader.tsx) のクリックでも可能（解析結果が
     無いうちはStep2以降へ移動不可）。
-  - ホーム（[HomeDashboard.tsx](src/components/HomeDashboard.tsx)）、分析
-    （[AnalyticsPanel.tsx](src/components/AnalyticsPanel.tsx)、rechartsによる売上推移・カテゴリ別グラフ。
-    現状はダミーデータ）、設定（[SettingsPanel.tsx](src/components/SettingsPanel.tsx)、言語切替スイッチを含む）。
+  - ホーム（[HomeDashboard.tsx](src/components/HomeDashboard.tsx)、`App.tsx`がマウント時に`getListings()`で
+    バックエンド/Supabaseから取得した売上サマリー・最近の出品を表示。出品成功時は`refreshListings()`で再取得）、
+    分析（[AnalyticsPanel.tsx](src/components/AnalyticsPanel.tsx)、rechartsによる売上推移・カテゴリ別グラフ。
+    現状はダミーデータ）、設定（[SettingsPanel.tsx](src/components/SettingsPanel.tsx)、言語切替スイッチと、
+    開発者向けの「AI解析をモックデータで代用」トグルを含む。ONの間は`analyzeImageWithAI`の代わりに
+    `mockAnalyzeImage`を使い、Gemini/Groqのクォータを消費せずに出品(`publishToEbay`は実API)を繰り返し検証できる）。
   - 完了・失敗通知は [Toast.tsx](src/components/Toast.tsx)、出品キャンセル確認は
     [CancelConfirmDialog.tsx](src/components/CancelConfirmDialog.tsx)。
   - 型定義は [src/types/app.ts](src/types/app.ts)（`TabType`, `RecentListing`, `SalesSummary`）を参照。
@@ -59,11 +62,11 @@ npm run setup:policies # eBay Business Policies・出荷元ロケーションの
   AIマルチエージェント分析結果の型（`ConditionAssessment`, `MarketTrend`, `CompetitorSuggestions`, `ListingAnalysis`）
   を定義。
 - **APIクライアント層**: [src/services/listingService.ts](src/services/listingService.ts)。
-  - `analyzeImageWithAI` / `estimatePrice` / `publishToEbay` : バックエンド（既定は`http://localhost:3001/api`、
-    `VITE_BACKEND_URL`環境変数で変更可）を呼び出す実装。`App.tsx`は現在これらを使用している。
+  - `analyzeImageWithAI` / `estimatePrice` / `publishToEbay` / `getListings` : バックエンド（既定は
+    `http://localhost:3001/api`、`VITE_BACKEND_URL`環境変数で変更可）を呼び出す実装。`App.tsx`は現在これらを使用。
   - `mockAnalyzeImage` / `mockPublishItem` : [src/mock/mockData.ts](src/mock/mockData.ts) のサンプルデータを返す
-    モック実装。バックエンドを起動せずにUI単体の動作確認をしたい場合に、`App.tsx` のimportを一時的にこちらへ
-    差し替えて使う。
+    モック実装。設定タブの「AI解析をモックデータで代用」トグルON時に`mockAnalyzeImage`が使われる
+    （バックエンドを起動せずにUI単体の動作確認をしたい場合は`mockPublishItem`へも差し替え可能）。
 
 ### バックエンド
 
@@ -71,8 +74,9 @@ npm run setup:policies # eBay Business Policies・出荷元ロケーションの
   - `POST /api/analyze-image` : アップロード画像をmulterで受け取り、`aiProvider.js`経由でGemini/Groqの
     どちらか（`AI_PROVIDER`で選択）にBase64画像を渡してタイトル・ブランド・型番・状態・説明文・商品仕様(aspects)を
     JSONで抽出。
-    基本抽出エージェントと[商品状態エージェント](server/analysisAgents.js)（`runConditionAgent`）を並列実行し、
-    `conditionAssessment`をレスポンスに含める。
+    基本抽出エージェントと[商品状態エージェント](server/analysisAgents.js)（`runConditionAgent`）、および
+    画像をSupabase Storageへアップロードして公開URLを発行する`uploadProductImage()`を`Promise.all`で並列実行し、
+    `conditionAssessment`と`imageUrl`（公開URL、アップロード失敗時は`null`）をレスポンスに含める。
   - `POST /api/estimate-price` : `{keywords, condition, productDraft, conditionAssessment}` を受け取り、eBay OAuth
     （Client Credentials）でアプリトークンを取得後、Browse APIで類似商品を検索。IQR（四分位範囲）アルゴリズムで
     外れ値を除去してから価格を算出しつつ、[市場トレンドエージェント](server/analysisAgents.js)（`runMarketTrendAgent`）
@@ -82,8 +86,13 @@ npm run setup:policies # eBay Business Policies・出荷元ロケーションの
     （snake_case）を返す。
   - `POST /api/publish-ebay` : eBay OAuth（Refresh Token Grant）でユーザートークンを取得し、Sell Inventory API を
     Inventory Item作成 → Offer作成 → Offer公開の3ステップで呼び出して出品を確定する。Step2で確認・編集された
-    `aspects`配列全体をeBayの商品仕様として送信する。`EBAY_FULFILLMENT_POLICY_ID` / `EBAY_RETURN_POLICY_ID` が
-    未設定の場合はここでエラーを返す（`npm run setup:policies` の実行を促す）。
+    `aspects`配列全体をeBayの商品仕様として送信する（フォールバックの`categoryId=112529`が必須とする
+    Brand/Color/Connectivity/Model/Typeが欠けている場合は既定値で補完）。`EBAY_FULFILLMENT_POLICY_ID` /
+    `EBAY_RETURN_POLICY_ID` が未設定の場合はここでエラーを返す（`npm run setup:policies` の実行を促す）。
+    出品成功後、[server/listingsRepository.js](server/listingsRepository.js)の`saveListing()`でSupabaseの
+    `listings`テーブルに出品履歴を保存する（保存失敗は出品自体の成否には影響させずログのみ出力）。
+  - `GET /api/listings` : Supabaseの`listings`テーブルから最近の出品一覧（新しい順）と売上サマリーを取得して返す。
+    ホーム画面のダッシュボード表示に使用（`App.tsx`がマウント時と出品成功後に呼び出す）。
   - `GET /api/ebay/auth-url` : eBayユーザー同意画面のURLを発行する（初回セットアップ用）。
   - `GET /api/ebay/callback` : 同意後にeBayからリダイレクトされ、認可コードを`refresh_token`に交換して
     `.env`の`EBAY_USER_REFRESH_TOKEN`に自動保存する。
@@ -113,7 +122,31 @@ npm run setup:policies # eBay Business Policies・出荷元ロケーションの
   取得した`refresh_token`やBusiness Policy IDの保存に使う。
 - **[server/setupPolicies.js](server/setupPolicies.js)**（`npm run setup:policies`）: eBayの配送・返品ポリシーと
   出荷元ロケーションを、既存があれば再利用・無ければ最低限の内容で新規作成し、IDを`.env`へ書き戻す一度きりの
-  セットアップスクリプト。`EBAY_USER_REFRESH_TOKEN`が既に`.env`にある状態で実行する。
+  セットアップスクリプト。`EBAY_USER_REFRESH_TOKEN`が既に`.env`にある状態で実行する。実行前にeBay側の
+  「Business Policy (Selling Policy Management)」機能へのオプトインが必要なため、`ensureBusinessPolicyOptIn()`で
+  自動的にオプトインしてからポリシーを作成する（新規Sandboxテストユーザーはデフォルトで無効なため）。
+- **[server/supabaseClient.js](server/supabaseClient.js)**: Supabaseクライアント（`@supabase/supabase-js`、
+  `SUPABASE_SERVICE_ROLE_KEY`を使うバックエンド専用の管理者権限クライアント）と、商品画像用ストレージ
+  バケット名`PRODUCT_IMAGES_BUCKET`（`'product-images'`）を集約。
+- **[server/listingsRepository.js](server/listingsRepository.js)**: Supabase Postgresの`listings`テーブルへの
+  読み書きを集約。`saveListing()`（出品成功時の1件保存）、`getRecentListings()`（新しい順取得）、
+  `getSalesSummary()`（売上サマリー集計。**現状「売却済み(SOLD)」へのステータス更新の仕組みが無いため、
+  全出品はACTIVEのまま記録され続け、totalRevenue/monthlyRevenue/soldItemsCountは常に0になる**）を提供。
+  テーブルスキーマは`.env.example`のコメントまたはSupabaseのSQL Editorで以下を実行して作成する:
+  ```sql
+  create table public.listings (
+    id uuid primary key default gen_random_uuid(),
+    sku text not null,
+    listing_id text not null,
+    title text not null,
+    price numeric not null,
+    status text not null default 'ACTIVE',
+    image_url text,
+    created_at timestamptz not null default now()
+  );
+  ```
+  加えてStorageに`product-images`という**Public**バケットの作成が必要（`server/index.js`の
+  `uploadProductImage()`がここへ画像をアップロードし、`getPublicUrl()`で公開URLを発行する）。
 
 ## eBay連携の初回セットアップ手順
 
@@ -150,11 +183,15 @@ GPT-4o Visionを想定していたが、実装はNode.js/Express + Google Gemini
 
 ## 未実装・要注意な箇所
 
-- **商品画像は公開URLになっていない。** フロントエンドは撮影画像を`URL.createObjectURL()`でブラウザ内だけの
-  `blob:` URLにしており、これはeBayから取得できない。[server/index.js](server/index.js)の`/api/publish-ebay`は
-  `http`で始まらない`imageUrl`をプレースホルダー画像（`https://via.placeholder.com/500`）に強制的に差し替える
-  暫定対応をしているため、実際の商品画像は出品されない。実運用には画像を外部ストレージ（Cloudinary/S3等）へ
-  アップロードして公開URLを払い出す処理の追加が必要。
+- **商品画像はSupabase Storageで公開URL化される。** `/api/analyze-image`が受け取った画像をSupabase Storageの
+  `product-images`バケットへアップロードし、発行された公開URLを`imageUrl`としてレスポンスに含める
+  （[server/index.js](server/index.js)の`uploadProductImage()`）。アップロードに失敗した場合、または
+  設定タブのモックモードでAI解析自体をスキップした場合は、フロントエンドが`blob:` URLにフォールバックし、
+  `/api/publish-ebay`側で`http`で始まらない`imageUrl`をプレースホルダー画像
+  （`https://via.placeholder.com/500`）に強制的に差し替える暫定対応が引き続き働く。
+- 「最近の出品・売上サマリー」はSupabase Postgresの`listings`テーブルに永続化されるが、**売却済み(SOLD)への
+  ステータス更新の仕組みが無い**ため、売上金額(`totalRevenue`/`monthlyRevenue`)と`soldItemsCount`は常に0。
+  実運用にはeBayからの売却通知（Webhook等）を受けてステータスを更新する仕組みの追加が必要。
 - `categoryId`は仮の固定値（`112529`）。実運用にはTaxonomy API等での適切なカテゴリ判定が必要。
 - AIマルチエージェント分析（特に商品状態評価）を追加したことで、画像1枚のアップロードあたりのAI API呼び出し回数が
   従来の1回から最大4回（基本抽出・商品状態・市場トレンド・競合比較）に増えている。無料枠のレート制限
@@ -164,11 +201,11 @@ GPT-4o Visionを想定していたが、実装はNode.js/Express + Google Gemini
 - Step3の総合判定スコアはAI解析直後の一時点のスナップショットであり、価格をその後手動調整してもリアルタイムには
   再計算されない（毎回バックエンド呼び出しが増えるコストとのトレードオフとして意図的に単純化している）。
 - `.env` はGit管理対象外（`.gitignore` に追記済み）。バックエンド側で読み込む変数は
-  `PORT` / `AI_PROVIDER` / `GEMINI_API_KEY` / `GEMINI_MODEL` / `GROQ_API_KEY` / `GROQ_MODEL` /
-  `EBAY_CLIENT_ID` / `EBAY_CLIENT_SECRET` / `EBAY_RU_NAME` /
+  `PORT` / `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` / `AI_PROVIDER` / `GEMINI_API_KEY` / `GEMINI_MODEL` /
+  `GROQ_API_KEY` / `GROQ_MODEL` / `EBAY_CLIENT_ID` / `EBAY_CLIENT_SECRET` / `EBAY_RU_NAME` /
   `EBAY_USER_REFRESH_TOKEN` / `EBAY_ENV` / `EBAY_MERCHANT_LOCATION_KEY` / `EBAY_FULFILLMENT_POLICY_ID` /
   `EBAY_RETURN_POLICY_ID` / `EBAY_PAYMENT_POLICY_ID` / `EBAY_LOCATION_ADDRESS_LINE1` 等の住所4項目
-  （[.env.example](.env.example)参照）。値はユーザー自身がGoogle AI Studio/Groq Console/eBay Developerで
+  （[.env.example](.env.example)参照）。値はユーザー自身がGoogle AI Studio/Groq Console/Supabase/eBay Developerで
   取得して設定する必要がある。
 - Sandbox環境での出品テストおよび Application Growth Check (AGC) 申請（本番の呼び出し上限引き上げ）は未着手。
   これらはeBay Developer Portal上でユーザー自身が行う必要がある。

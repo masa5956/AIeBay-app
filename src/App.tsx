@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import type { TabType, RecentListing, SalesSummary } from './types/app';
 import type { ProductData } from './types/listing';
-import { analyzeImageWithAI, mockAnalyzeImage, publishToEbay } from './services/listingService';
+import { analyzeImageWithAI, getListings, mockAnalyzeImage, publishToEbay } from './services/listingService';
 import { useLanguage } from './i18n/LanguageContext';
 import BottomNav from './components/BottomNav';
 import Toast, { type Feedback } from './components/Toast';
@@ -48,20 +48,30 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [feedback]);
 
-  // ダミーの売上データ
-  const [salesSummary] = useState<SalesSummary>({
-    totalRevenue: 12450.0,
-    monthlyRevenue: 3200.5,
-    activeListingsCount: 18,
-    soldItemsCount: 42,
+  // 売上サマリー・最近の出品（バックエンド/DBから取得。取得できるまでは空表示）
+  const [salesSummary, setSalesSummary] = useState<SalesSummary>({
+    totalRevenue: 0,
+    monthlyRevenue: 0,
+    activeListingsCount: 0,
+    soldItemsCount: 0,
   });
+  const [recentListings, setRecentListings] = useState<RecentListing[]>([]);
 
-  // ダミーの最近の出品
-  const [recentListings, setRecentListings] = useState<RecentListing[]>([
-    { id: '1', title: 'Sony WH-1000XM5 Wireless Headphones', price: 249.99, status: 'ACTIVE', date: '2026-07-28' },
-    { id: '2', title: 'Nintendo Switch OLED Model White', price: 299.0, status: 'SOLD', date: '2026-07-25' },
-    { id: '3', title: 'Logitech MX Master 3S Mouse', price: 85.5, status: 'ACTIVE', date: '2026-07-20' },
-  ]);
+  const refreshListings = async () => {
+    try {
+      const data = await getListings();
+      setSalesSummary(data.salesSummary);
+      setRecentListings(data.recentListings);
+    } catch (err) {
+      // ホーム表示の初期取得失敗は致命的ではないため、トーストは出さず静かに諦める
+      console.error('出品履歴の取得に失敗しました', err);
+    }
+  };
+
+  // マウント時に一度、最近の出品・売上サマリーを取得
+  useEffect(() => {
+    refreshListings();
+  }, []);
 
   // 画像アップロード処理
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -106,14 +116,7 @@ export default function App() {
       if (result.success) {
         setFeedback({ type: 'success', message: `${t('publishSuccessPrefix')} ${result.listingId}）` });
 
-        const newListing: RecentListing = {
-          id: result.listingId,
-          title: productData.title,
-          price: productData.pricing.suggestedPrice,
-          status: 'ACTIVE',
-          date: new Date().toISOString().split('T')[0],
-        };
-        setRecentListings([newListing, ...recentListings]);
+        await refreshListings();
 
         setIsListingMode(false);
         setStep(1);

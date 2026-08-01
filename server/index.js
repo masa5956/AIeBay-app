@@ -14,6 +14,8 @@ import {
 import { updateEnvValue } from './envFile.js';
 import { AI_PROVIDER, generateImageJson } from './aiProvider.js';
 import { runConditionAgent, runMarketTrendAgent, runCompetitorAgent, scoreListing } from './analysisAgents.js';
+import { supabase, PRODUCT_IMAGES_BUCKET } from './supabaseClient.js';
+import { saveListing, getRecentListings, getSalesSummary } from './listingsRepository.js';
 
 dotenv.config();
 
@@ -23,6 +25,25 @@ app.use(express.json());
 
 // 画像アップロードのメモリ保持設定
 const upload = multer({ storage: multer.memoryStorage() });
+
+// 撮影画像をSupabase Storageにアップロードし、eBayが取得可能な公開URLを発行する。
+// 失敗してもAI解析自体は継続させ、呼び出し元でnullをフォールバック処理させる。
+async function uploadProductImage(buffer, mimetype) {
+  const ext = (mimetype.split('/')[1] || 'jpg').replace('jpeg', 'jpg');
+  const filePath = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+
+  const { error } = await supabase.storage
+    .from(PRODUCT_IMAGES_BUCKET)
+    .upload(filePath, buffer, { contentType: mimetype });
+
+  if (error) {
+    console.error('Supabase画像アップロードエラー:', error);
+    return null;
+  }
+
+  const { data } = supabase.storage.from(PRODUCT_IMAGES_BUCKET).getPublicUrl(filePath);
+  return data.publicUrl;
+}
 
 // eBayのcondition値からBrowse APIのconditionIdへのマッピング
 const CONDITION_ID_MAP = {
@@ -58,8 +79,8 @@ app.post('/api/analyze-image', upload.single('image'), async (req, res) => {
     // 画像をBase64変換
     const base64Image = req.file.buffer.toString('base64');
 
-    // 基本情報抽出エージェントと商品状態エージェントを並列実行（高速レスポンスのため）
-    const [parsedContent, conditionAssessment] = await Promise.all([
+    // 基本情報抽出・商品状態エージェント・画像アップロードを並列実行（高速レスポンスのため）
+    const [parsedContent, conditionAssessment, imageUrl] = await Promise.all([
       generateImageJson(
         `この商品画像を分析し、eBay出品用の情報をJSONフォーマットのみで出力してください（説明や前置きは不要）。
 実際のeBay出品ページの「Item Specifics（商品仕様）」欄を参考に、写っている商品のカテゴリから推測できる
@@ -95,9 +116,10 @@ app.post('/api/analyze-image', upload.single('image'), async (req, res) => {
         req.file.mimetype
       ),
       runConditionAgent(base64Image, req.file.mimetype),
+      uploadProductImage(req.file.buffer, req.file.mimetype),
     ]);
 
-    return res.json({ ...parsedContent, conditionAssessment });
+    return res.json({ ...parsedContent, conditionAssessment, imageUrl });
   } catch (error) {
     console.error('AI Analysis Error:', error);
     return res.status(500).json({ error: 'AI解析に失敗しました。' });
@@ -316,13 +338,54 @@ app.post('/api/publish-ebay', async (req, res) => {
       }
     );
 
+    const listingId = publishResponse.data.listingId;
+
+    // 出品履歴をDBに保存（失敗しても出品自体は成功しているため、ログのみでレスポンスは成功として返す）
+    try {
+      await saveListing({
+        sku,
+        listingId,
+        title: productData.title,
+        price: productData.pricing.suggestedPrice,
+        imageUrl,
+      });
+    } catch (dbError) {
+      console.error('出品履歴の保存に失敗しました:', dbError);
+    }
+
     return res.json({
       success: true,
-      listingId: publishResponse.data.listingId,
+      listingId,
     });
   } catch (error) {
     console.error('eBay Publishing Error:', error?.response?.data || error);
     return res.status(500).json({ error: 'eBayへの出品処理に失敗しました。' });
+  }
+});
+
+// =================================================================
+// 出品履歴・売上サマリー取得エンドポイント (/api/listings)
+// =================================================================
+app.get('/api/listings', async (req, res) => {
+  try {
+    const [recentListingsRaw, salesSummary] = await Promise.all([
+      getRecentListings(20),
+      getSalesSummary(),
+    ]);
+
+    const recentListings = recentListingsRaw.map((row) => ({
+      id: row.listing_id,
+      title: row.title,
+      price: Number(row.price),
+      status: row.status,
+      date: row.created_at.split('T')[0],
+      imageUrl: row.image_url || undefined,
+    }));
+
+    return res.json({ recentListings, salesSummary });
+  } catch (error) {
+    console.error('出品履歴の取得に失敗しました:', error);
+    return res.status(500).json({ error: '出品履歴の取得に失敗しました。' });
   }
 });
 

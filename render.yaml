@@ -12,6 +12,10 @@ services:
     buildCommand: npm install
     startCommand: node server/index.js
     envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
       - key: AI_PROVIDER
         value: gemini
       - key: GEMINI_API_KEY
