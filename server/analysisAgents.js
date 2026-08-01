@@ -1,33 +1,19 @@
-import { genAI, GEMINI_MODEL, generateJson } from './geminiClient.js';
+import { generateJson, generateImageJson } from './aiProvider.js';
 
 // =================================================================
 // 商品状態・欠陥検出エージェント（画像を見て状態を厳しく査定する）
 // =================================================================
 export async function runConditionAgent(base64Image, mimeType) {
-  const response = await genAI.models.generateContent({
-    model: GEMINI_MODEL,
-    contents: [
-      {
-        role: 'user',
-        parts: [
-          {
-            text: `あなたはeBayの検品担当者です。この商品画像を厳しくチェックし、コンディションを評価してください。
+  const prompt = `あなたはeBayの検品担当者です。この商品画像を厳しくチェックし、コンディションを評価してください。
 JSON形式のみで出力:
 {
   "conditionScore": 100が新品同様・0が大きく破損の0-100整数,
   "conditionLabel": "Like New / Excellent / Good / Fair / Poor のいずれか",
   "defects": ["画像から読み取れる傷・汚れ・欠損・摩耗などを箇条書き（無ければ空配列）"],
   "notes": "総合的な状態に関する1〜2文の所見（日本語）"
-}`,
-          },
-          { inlineData: { mimeType, data: base64Image } },
-        ],
-      },
-    ],
-    config: { responseMimeType: 'application/json' },
-  });
+}`;
 
-  return JSON.parse(response.text || '{}');
+  return generateImageJson(prompt, base64Image, mimeType);
 }
 
 // =================================================================

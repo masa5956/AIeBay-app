@@ -18,3 +18,18 @@ export async function generateJson(promptText) {
   });
   return JSON.parse(response.text || '{}');
 }
+
+// 画像+テキストのプロンプトをGeminiに投げ、JSONとしてパースして返す共通ヘルパー
+export async function generateImageJson(promptText, base64Image, mimeType) {
+  const response = await genAI.models.generateContent({
+    model: GEMINI_MODEL,
+    contents: [
+      {
+        role: 'user',
+        parts: [{ text: promptText }, { inlineData: { mimeType, data: base64Image } }],
+      },
+    ],
+    config: { responseMimeType: 'application/json' },
+  });
+  return JSON.parse(response.text || '{}');
+}

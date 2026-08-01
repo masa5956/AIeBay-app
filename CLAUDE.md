@@ -11,8 +11,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## プロジェクト概要
 
 eBay向けのAI自動出品ツール。スマートフォン画面を模したReact SPAで、商品写真をアップロードすると
-Gemini（Vision）が画像解析を行い、複数のAIエージェントが市場トレンド・競合比較・商品状態を多角的に分析した上で
-eBayに出品するまでのウィザードUIを提供する。詳細な要件・API契約は [PROJECT_REQUIREMENTS.md](PROJECT_REQUIREMENTS.md) を参照。
+Gemini（Vision）またはGroq（Vision）が画像解析を行い、複数のAIエージェントが市場トレンド・競合比較・商品状態を
+多角的に分析した上でeBayに出品するまでのウィザードUIを提供する。詳細な要件・API契約は
+[PROJECT_REQUIREMENTS.md](PROJECT_REQUIREMENTS.md) を参照。
 
 ## よく使うコマンド
 
@@ -67,8 +68,9 @@ npm run setup:policies # eBay Business Policies・出荷元ロケーションの
 ### バックエンド
 
 - [server/index.js](server/index.js)（Express、`npm run server` で起動、要 `.env`）。
-  - `POST /api/analyze-image` : アップロード画像をmulterで受け取り、Gemini（`@google/genai`、既定モデルは
-    `gemini-3.6-flash`）にBase64画像を渡してタイトル・ブランド・型番・状態・説明文・商品仕様(aspects)をJSONで抽出。
+  - `POST /api/analyze-image` : アップロード画像をmulterで受け取り、`aiProvider.js`経由でGemini/Groqの
+    どちらか（`AI_PROVIDER`で選択）にBase64画像を渡してタイトル・ブランド・型番・状態・説明文・商品仕様(aspects)を
+    JSONで抽出。
     基本抽出エージェントと[商品状態エージェント](server/analysisAgents.js)（`runConditionAgent`）を並列実行し、
     `conditionAssessment`をレスポンスに含める。
   - `POST /api/estimate-price` : `{keywords, condition, productDraft, conditionAssessment}` を受け取り、eBay OAuth
@@ -85,8 +87,20 @@ npm run setup:policies # eBay Business Policies・出荷元ロケーションの
   - `GET /api/ebay/auth-url` : eBayユーザー同意画面のURLを発行する（初回セットアップ用）。
   - `GET /api/ebay/callback` : 同意後にeBayからリダイレクトされ、認可コードを`refresh_token`に交換して
     `.env`の`EBAY_USER_REFRESH_TOKEN`に自動保存する。
+- **[server/aiProvider.js](server/aiProvider.js)**: AIエンジンの切替レイヤー。`.env`の`AI_PROVIDER`
+  （`gemini` または `groq`、未設定時は`gemini`）を見て、[server/geminiClient.js](server/geminiClient.js)と
+  [server/groqClient.js](server/groqClient.js)のどちらかを選択し、共通インターフェース
+  `generateJson(promptText)` / `generateImageJson(promptText, base64Image, mimeType)` として公開する。
+  `server/index.js`・`server/analysisAgents.js`はどちらも`aiProvider.js`経由でのみAIを呼び出すため、
+  `.env`の`AI_PROVIDER`を書き換えてサーバーを再起動するだけでGemini⇔Groqを切替できる
+  （例: Geminiの無料枠レート制限に達した場合の一時的な切替に使う）。
 - **[server/geminiClient.js](server/geminiClient.js)**: Geminiクライアント（`GoogleGenAI`）と`GEMINI_MODEL`定数を
   集約。`dotenv.config()`を自身でも呼び出しており、importの評価順序に依存しない。
+- **[server/groqClient.js](server/groqClient.js)**: Groqクライアント（`groq-sdk`）と`GROQ_MODEL`定数
+  （既定は`meta-llama/llama-4-scout-17b-16e-instruct`、マルチモーダル対応モデル）を集約。テキスト応答に
+  Markdownのコードフェンスや前置きが混ざる場合に備え、`parseJsonLoose()`で緩くJSON部分を抽出する。
+  画像+テキストの呼び出しでは`response_format: json_object`を指定しない（画像入力との組み合わせが
+  非対応のモデルがあるため）、プロンプト内指示＋緩いパースでJSON化する点がGemini版との実装差異。
 - **[server/analysisAgents.js](server/analysisAgents.js)**: AIマルチエージェント分析の実体。
   `runConditionAgent`（画像ベースの商品状態・欠陥検出）、`runMarketTrendAgent` / `runCompetitorAgent`
   （テキストベースの市場トレンド・競合比較、eBay Browse APIの検索結果を渡す）、`scoreListing`（LLM呼び出しではない
@@ -142,15 +156,19 @@ GPT-4o Visionを想定していたが、実装はNode.js/Express + Google Gemini
   暫定対応をしているため、実際の商品画像は出品されない。実運用には画像を外部ストレージ（Cloudinary/S3等）へ
   アップロードして公開URLを払い出す処理の追加が必要。
 - `categoryId`は仮の固定値（`112529`）。実運用にはTaxonomy API等での適切なカテゴリ判定が必要。
-- AIマルチエージェント分析（特に商品状態評価）を追加したことで、画像1枚のアップロードあたりのGemini API呼び出し回数が
+- AIマルチエージェント分析（特に商品状態評価）を追加したことで、画像1枚のアップロードあたりのAI API呼び出し回数が
   従来の1回から最大4回（基本抽出・商品状態・市場トレンド・競合比較）に増えている。無料枠のレート制限
-  （例: 1日あたりのリクエスト数上限）に達しやすい点に注意。
+  （例: 1日あたりのリクエスト数上限）に達しやすい点に注意。Geminiのレート制限に達した場合は、`.env`の
+  `AI_PROVIDER`を`"groq"`に変更しサーバーを再起動することでGroq（`meta-llama/llama-4-scout-17b-16e-instruct`）に
+  切替可能（[server/aiProvider.js](server/aiProvider.js)参照）。
 - Step3の総合判定スコアはAI解析直後の一時点のスナップショットであり、価格をその後手動調整してもリアルタイムには
   再計算されない（毎回バックエンド呼び出しが増えるコストとのトレードオフとして意図的に単純化している）。
 - `.env` はGit管理対象外（`.gitignore` に追記済み）。バックエンド側で読み込む変数は
-  `PORT` / `GEMINI_API_KEY` / `GEMINI_MODEL` / `EBAY_CLIENT_ID` / `EBAY_CLIENT_SECRET` / `EBAY_RU_NAME` /
+  `PORT` / `AI_PROVIDER` / `GEMINI_API_KEY` / `GEMINI_MODEL` / `GROQ_API_KEY` / `GROQ_MODEL` /
+  `EBAY_CLIENT_ID` / `EBAY_CLIENT_SECRET` / `EBAY_RU_NAME` /
   `EBAY_USER_REFRESH_TOKEN` / `EBAY_ENV` / `EBAY_MERCHANT_LOCATION_KEY` / `EBAY_FULFILLMENT_POLICY_ID` /
   `EBAY_RETURN_POLICY_ID` / `EBAY_PAYMENT_POLICY_ID` / `EBAY_LOCATION_ADDRESS_LINE1` 等の住所4項目
-  （[.env.example](.env.example)参照）。値はユーザー自身がGoogle AI Studio/eBay Developerで取得して設定する必要がある。
+  （[.env.example](.env.example)参照）。値はユーザー自身がGoogle AI Studio/Groq Console/eBay Developerで
+  取得して設定する必要がある。
 - Sandbox環境での出品テストおよび Application Growth Check (AGC) 申請（本番の呼び出し上限引き上げ）は未着手。
   これらはeBay Developer Portal上でユーザー自身が行う必要がある。

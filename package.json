@@ -17,6 +17,7 @@
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "groq-sdk": "^1.5.0",
     "lucide-react": "^0.344.0",
     "multer": "^2.2.0",
     "react": "^18.2.0",

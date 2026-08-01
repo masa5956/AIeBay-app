@@ -12,7 +12,7 @@ import {
   exchangeAuthCodeForTokens,
 } from './ebayAuth.js';
 import { updateEnvValue } from './envFile.js';
-import { genAI, GEMINI_MODEL } from './geminiClient.js';
+import { AI_PROVIDER, generateImageJson } from './aiProvider.js';
 import { runConditionAgent, runMarketTrendAgent, runCompetitorAgent, scoreListing } from './analysisAgents.js';
 
 dotenv.config();
@@ -59,15 +59,9 @@ app.post('/api/analyze-image', upload.single('image'), async (req, res) => {
     const base64Image = req.file.buffer.toString('base64');
 
     // 基本情報抽出エージェントと商品状態エージェントを並列実行（高速レスポンスのため）
-    const [response, conditionAssessment] = await Promise.all([
-      genAI.models.generateContent({
-        model: GEMINI_MODEL,
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              {
-                text: `この商品画像を分析し、eBay出品用の情報をJSONフォーマットのみで出力してください（説明や前置きは不要）。
+    const [parsedContent, conditionAssessment] = await Promise.all([
+      generateImageJson(
+        `この商品画像を分析し、eBay出品用の情報をJSONフォーマットのみで出力してください（説明や前置きは不要）。
 実際のeBay出品ページの「Item Specifics（商品仕様）」欄を参考に、写っている商品のカテゴリから推測できる
 具体的な仕様項目をできるだけ多く含めてください。ブランドやモデルが商品自体から読み取れない場合は
 "Unbranded" / "Does not apply" を使ってください。
@@ -96,24 +90,12 @@ app.post('/api/analyze-image', upload.single('image'), async (req, res) => {
 "aspects"は上記をベースに、写っている商品カテゴリに応じて適切な項目を追加・省略してよい
 （例: 家電なら「Power Source」「Connectivity」、衣類なら「Style」「Pattern」など）。
 値が不明な項目はキーごと省略してください。`,
-              },
-              {
-                inlineData: {
-                  mimeType: req.file.mimetype,
-                  data: base64Image,
-                },
-              },
-            ],
-          },
-        ],
-        config: {
-          responseMimeType: 'application/json',
-        },
-      }),
+        base64Image,
+        req.file.mimetype
+      ),
       runConditionAgent(base64Image, req.file.mimetype),
     ]);
 
-    const parsedContent = JSON.parse(response.text || '{}');
     return res.json({ ...parsedContent, conditionAssessment });
   } catch (error) {
     console.error('AI Analysis Error:', error);
@@ -362,4 +344,5 @@ app.get('/api/ebay/callback', async (req, res) => {
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`Backend Server running on port ${PORT}`);
+  console.log(`AI Provider: ${AI_PROVIDER}`);
 });
