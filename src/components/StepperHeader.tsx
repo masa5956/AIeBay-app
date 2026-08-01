@@ -1,5 +1,3 @@
-import { useLanguage } from '../i18n/LanguageContext';
-
 interface StepperHeaderProps {
   step: number;
   hasProductData: boolean;
@@ -8,13 +6,11 @@ interface StepperHeaderProps {
 
 // 出品ウィザードのステップ進捗バー（クリックで各ステップへ移動可能）
 export default function StepperHeader({ step, hasProductData, onGoToStep }: StepperHeaderProps) {
-  const { t } = useLanguage();
-
   const steps = [
-    { num: 1, label: t('stepPhoto') },
-    { num: 2, label: t('stepAnalyze') },
-    { num: 3, label: t('stepPrice') },
-    { num: 4, label: t('stepPublish') },
+    { num: 1, label: '撮影' },
+    { num: 2, label: '解析' },
+    { num: 3, label: '価格' },
+    { num: 4, label: '出品' },
   ];
 
   return (

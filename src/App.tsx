@@ -1,14 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import type { TabType, RecentListing, SalesSummary } from './types/app';
-import type { Platform, ProductData } from './types/listing';
-import {
-  analyzeImageWithAI,
-  completeMercariListing,
-  getListings,
-  mockAnalyzeImage,
-  publishToEbay,
-} from './services/listingService';
-import { useLanguage } from './i18n/LanguageContext';
+import type { ProductData } from './types/listing';
+import { analyzeImageWithAI, getListings, mockAnalyzeImage, publishToEbay } from './services/listingService';
 import BottomNav from './components/BottomNav';
 import Toast, { type Feedback } from './components/Toast';
 import CancelConfirmDialog from './components/CancelConfirmDialog';
@@ -22,15 +15,11 @@ import Step3_Pricing from './components/Step3_Pricing';
 import Step4_Preview from './components/Step4_Preview';
 
 export default function App() {
-  const { t } = useLanguage();
-
   // ナビゲーション状態
   const [activeTab, setActiveTab] = useState<TabType>('home');
   // 出品フロー実行中かどうか
   const [isListingMode, setIsListingMode] = useState<boolean>(false);
 
-  // 出品先プラットフォーム（メルカリには自動出品APIが無いため、選択に応じてAI出力言語・出品方法が切替わる）
-  const [platform, setPlatform] = useState<Platform>('ebay');
   // 出品ステッパー用状態
   const [step, setStep] = useState<number>(1);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -88,13 +77,13 @@ export default function App() {
     if (!file) return;
 
     setIsLoading(true);
-    setLoadingText(t('loadingAnalyzing'));
+    setLoadingText('AIが画像から文字・属性を抽出中...');
     try {
-      const result = useMockAnalysis ? await mockAnalyzeImage(file) : await analyzeImageWithAI(file, platform);
+      const result = useMockAnalysis ? await mockAnalyzeImage(file) : await analyzeImageWithAI(file);
       setProductData(result);
       setStep(2);
     } catch (err) {
-      setFeedback({ type: 'error', message: t('analysisFailure') });
+      setFeedback({ type: 'error', message: 'AI解析に失敗しました' });
     } finally {
       setIsLoading(false);
     }
@@ -115,25 +104,15 @@ export default function App() {
     setProductData({ ...productData, aspects: updatedAspects });
   };
 
-  // 出品処理（eBay: 実APIで出品確定 / メルカリ: 手動出品完了をアプリの履歴に記録するのみ）
+  // 出品処理
   const handlePublish = async () => {
     if (!productData) return;
     setIsLoading(true);
-    setLoadingText(productData.platform === 'mercari' ? t('loadingMercariComplete') : t('loadingPublishing'));
+    setLoadingText('eBayに出品データを送信中...');
     try {
-      const result =
-        productData.platform === 'mercari'
-          ? await completeMercariListing(productData)
-          : await publishToEbay(productData);
-
+      const result = await publishToEbay(productData);
       if (result.success) {
-        setFeedback({
-          type: 'success',
-          message:
-            productData.platform === 'mercari'
-              ? t('mercariCompleteSuccess')
-              : `${t('publishSuccessPrefix')} ${result.listingId}）`,
-        });
+        setFeedback({ type: 'success', message: `出品が完了しました（Listing ID: ${result.listingId}）` });
 
         await refreshListings();
 
@@ -142,10 +121,7 @@ export default function App() {
         setProductData(null);
       }
     } catch (err) {
-      setFeedback({
-        type: 'error',
-        message: productData.platform === 'mercari' ? t('mercariCompleteFailure') : t('publishFailure'),
-      });
+      setFeedback({ type: 'error', message: '出品処理に失敗しました' });
     } finally {
       setIsLoading(false);
     }
@@ -177,9 +153,9 @@ export default function App() {
                 onClick={() => setIsCancelConfirmOpen(true)}
                 className="text-xs font-bold text-slate-400 hover:text-slate-600"
               >
-                ✕ {t('wizardClose')}
+                ✕ 閉じる
               </button>
-              <h1 className="text-base font-extrabold text-slate-800">{t('wizardTitle')}</h1>
+              <h1 className="text-base font-extrabold text-slate-800">eBay 自動出品ウィザード</h1>
               <div className="w-8"></div>
             </header>
 
@@ -192,9 +168,7 @@ export default function App() {
               </div>
             )}
 
-            {!isLoading && step === 1 && (
-              <Step1_ImageUpload platform={platform} onChangePlatform={setPlatform} onUpload={handleImageUpload} />
-            )}
+            {!isLoading && step === 1 && <Step1_ImageUpload onUpload={handleImageUpload} />}
 
             {!isLoading && step === 2 && productData && (
               <Step2_MetadataEdit

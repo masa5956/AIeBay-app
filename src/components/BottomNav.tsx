@@ -1,6 +1,5 @@
 import { Home, BarChart2, Settings } from 'lucide-react';
 import type { TabType } from '../types/app';
-import { useLanguage } from '../i18n/LanguageContext';
 
 interface BottomNavProps {
   activeTab: TabType;
@@ -9,12 +8,10 @@ interface BottomNavProps {
 
 // 画面下部のタブナビゲーション（lucide-reactアイコン使用）
 export default function BottomNav({ activeTab, onChangeTab }: BottomNavProps) {
-  const { t } = useLanguage();
-
   const items: { tab: TabType; label: string; Icon: typeof Home }[] = [
-    { tab: 'home', label: t('navHome'), Icon: Home },
-    { tab: 'analytics', label: t('navAnalytics'), Icon: BarChart2 },
-    { tab: 'settings', label: t('navSettings'), Icon: Settings },
+    { tab: 'home', label: 'ホーム', Icon: Home },
+    { tab: 'analytics', label: '分析', Icon: BarChart2 },
+    { tab: 'settings', label: '設定', Icon: Settings },
   ];
 
   return (

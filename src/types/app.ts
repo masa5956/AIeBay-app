@@ -1,15 +1,12 @@
-import type { Platform } from './listing';
-
 export type TabType = 'home' | 'analytics' | 'settings';
 
 export interface RecentListing {
   id: string;
   title: string;
   price: number;
-  status: 'ACTIVE' | 'SOLD' | 'DRAFT' | 'MANUAL';
+  status: 'ACTIVE' | 'SOLD' | 'DRAFT';
   date: string;
   imageUrl?: string;
-  platform: Platform;
 }
 
 export interface SalesSummary {
@@ -35,15 +32,4 @@ export interface CategoryBreakdownPoint {
 export interface AnalyticsData {
   monthlyTrend: MonthlyTrendPoint[];
   categoryBreakdown: CategoryBreakdownPoint[];
-}
-
-// ジャンル比較機能: eBay Browse APIの現在の出品状況からの相対的な需要スコア
-// （売却実績ではなく、出品数・価格帯の安定度からの推定である点に注意）
-export interface GenreComparisonResult {
-  genre: string;
-  activeListingCount: number;
-  avgPrice: number;
-  minPrice: number;
-  maxPrice: number;
-  demandScore: number;
 }

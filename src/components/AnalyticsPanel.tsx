@@ -1,13 +1,10 @@
 import { useEffect, useState } from 'react';
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
-import { useLanguage } from '../i18n/LanguageContext';
 import { getAnalytics } from '../services/listingService';
 import type { AnalyticsData } from '../types/app';
-import GenreComparisonPanel from './GenreComparisonPanel';
 
 // 分析タブ: 実際の出品データ(DB)に基づく出品額推移・カテゴリ別出品額のグラフ表示
 export default function AnalyticsPanel() {
-  const { t } = useLanguage();
   const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
@@ -34,14 +31,14 @@ export default function AnalyticsPanel() {
   return (
     <div className="space-y-4 pt-2">
       <div>
-        <h1 className="text-base font-bold text-slate-800">{t('analyticsTitle')}</h1>
-        <p className="text-xs text-slate-400 mt-0.5">{t('analyticsSubtitle')}</p>
+        <h1 className="text-base font-bold text-slate-800">販売統計分析</h1>
+        <p className="text-xs text-slate-400 mt-0.5">出品額推移とカテゴリ別の出品傾向</p>
       </div>
 
       <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
-        <h3 className="text-xs font-bold text-slate-600 mb-2">{t('analyticsRevenueTrend')}</h3>
+        <h3 className="text-xs font-bold text-slate-600 mb-2">出品額推移（過去6ヶ月）</h3>
         {isLoading ? (
-          <p className="text-xs text-slate-400 py-10 text-center">{t('analyticsLoading')}</p>
+          <p className="text-xs text-slate-400 py-10 text-center">データを読み込み中...</p>
         ) : hasMonthlyData ? (
           <ResponsiveContainer width="100%" height={160}>
             <AreaChart data={analytics!.monthlyTrend} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
@@ -59,14 +56,14 @@ export default function AnalyticsPanel() {
             </AreaChart>
           </ResponsiveContainer>
         ) : (
-          <p className="text-xs text-slate-400 py-10 text-center">{t('analyticsNoData')}</p>
+          <p className="text-xs text-slate-400 py-10 text-center">まだ出品データがありません。出品するとここに表示されます。</p>
         )}
       </div>
 
       <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
-        <h3 className="text-xs font-bold text-slate-600 mb-2">{t('analyticsCategoryBreakdown')}</h3>
+        <h3 className="text-xs font-bold text-slate-600 mb-2">カテゴリ別出品額構成</h3>
         {isLoading ? (
-          <p className="text-xs text-slate-400 py-10 text-center">{t('analyticsLoading')}</p>
+          <p className="text-xs text-slate-400 py-10 text-center">データを読み込み中...</p>
         ) : hasCategoryData ? (
           <ResponsiveContainer width="100%" height={160}>
             <BarChart data={analytics!.categoryBreakdown} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
@@ -78,13 +75,13 @@ export default function AnalyticsPanel() {
             </BarChart>
           </ResponsiveContainer>
         ) : (
-          <p className="text-xs text-slate-400 py-10 text-center">{t('analyticsNoData')}</p>
+          <p className="text-xs text-slate-400 py-10 text-center">まだ出品データがありません。出品するとここに表示されます。</p>
         )}
       </div>
 
-      <p className="text-[10px] text-slate-400 text-center">{t('analyticsCaveat')}</p>
-
-      <GenreComparisonPanel />
+      <p className="text-[10px] text-slate-400 text-center">
+        実際の出品データに基づく集計です（売却済みかどうかは反映されません）
+      </p>
     </div>
   );
 }

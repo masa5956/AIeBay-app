@@ -17,7 +17,6 @@ import { runConditionAgent, runMarketTrendAgent, runCompetitorAgent, scoreListin
 import { supabase, PRODUCT_IMAGES_BUCKET } from './supabaseClient.js';
 import { saveListing, getRecentListings, getSalesSummary, getAnalytics } from './listingsRepository.js';
 import { removeOutliersByIQR } from './priceStats.js';
-import { compareGenres } from './genreComparison.js';
 
 dotenv.config();
 
@@ -92,41 +91,23 @@ const EBAY_ANALYSIS_PROMPT = `この商品画像を分析し、eBay出品用の�
 （例: 家電なら「Power Source」「Connectivity」、衣類なら「Style」「Pattern」など）。
 値が不明な項目はキーごと省略してください。`;
 
-// メルカリには第三者向けの自動出品APIが無いため、ここではメルカリの出品フォームに
-// そのままコピー&ペーストできる日本語の文言を生成するのみ（実際の出品はユーザーが手動で行う）。
-const MERCARI_ANALYSIS_PROMPT = `この商品画像を分析し、フリマアプリ「メルカリ」に出品するための情報を
-日本語のJSONフォーマットのみで出力してください（説明や前置きは不要）。
-
-出力フォーマット:
-{
-  "title": "メルカリでよく検索されるキーワードを含む40文字以内の商品名（日本語）",
-  "brand": "ブランド名（不明ならDoes not apply）",
-  "model": "型番（不明なら空文字）",
-  "mercariCondition": "新品、未使用 / 未使用に近い / 目立った傷や汚れなし / やや傷や汚れあり / 傷や汚れあり / 全体的に状態が悪い のいずれか",
-  "mercariCategorySuggestion": "メルカリのカテゴリ階層の推測（例: レディース > バッグ > ハンドバッグ）",
-  "description": "日本語の商品説明文（300〜500字程度、以下の構成）。1段落目: 商品概要（何の商品か、ブランド・用途）。2段落目: サイズ・素材・仕様など分かる範囲で具体的に。3段落目: 商品の状態（傷・汚れ・使用感を画像から具体的かつ正直に記述、誇張しない）。4段落目: 付属品（分かれば記載、無ければ省略）。"
-}`;
-
 app.post('/api/analyze-image', upload.single('image'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: '画像ファイルが添付されていません。' });
     }
 
-    const platform = req.body.platform === 'mercari' ? 'mercari' : 'ebay';
-    const prompt = platform === 'mercari' ? MERCARI_ANALYSIS_PROMPT : EBAY_ANALYSIS_PROMPT;
-
     // 画像をBase64変換
     const base64Image = req.file.buffer.toString('base64');
 
     // 基本情報抽出・商品状態エージェント・画像アップロードを並列実行（高速レスポンスのため）
     const [parsedContent, conditionAssessment, imageUrl] = await Promise.all([
-      generateImageJson(prompt, base64Image, req.file.mimetype),
+      generateImageJson(EBAY_ANALYSIS_PROMPT, base64Image, req.file.mimetype),
       runConditionAgent(base64Image, req.file.mimetype),
       uploadProductImage(req.file.buffer, req.file.mimetype),
     ]);
 
-    return res.json({ ...parsedContent, conditionAssessment, imageUrl, platform });
+    return res.json({ ...parsedContent, conditionAssessment, imageUrl });
   } catch (error) {
     console.error('AI Analysis Error:', error);
     return res.status(500).json({ error: 'AI解析に失敗しました。' });
@@ -357,7 +338,6 @@ app.post('/api/publish-ebay', async (req, res) => {
         price: productData.pricing.suggestedPrice,
         imageUrl,
         category: aspects.Type?.[0] || 'Other',
-        platform: 'ebay',
       });
     } catch (dbError) {
       console.error('出品履歴の保存に失敗しました:', dbError);
@@ -370,38 +350,6 @@ app.post('/api/publish-ebay', async (req, res) => {
   } catch (error) {
     console.error('eBay Publishing Error:', error?.response?.data || error);
     return res.status(500).json({ error: 'eBayへの出品処理に失敗しました。' });
-  }
-});
-
-// =================================================================
-// メルカリ出品完了の記録エンドポイント (/api/mercari/complete)
-// メルカリには自動出品APIが無いため、ユーザーがメルカリアプリ/サイトへ手動でコピー&ペーストして
-// 出品した後に、アプリ側の履歴(ホーム画面・分析タブ)に反映するためだけの記録用エンドポイント。
-// 外部APIへのリクエストは一切発生しない。
-// =================================================================
-app.post('/api/mercari/complete', async (req, res) => {
-  try {
-    const { title, price, imageUrl, category } = req.body;
-    if (!title || typeof price !== 'number') {
-      return res.status(400).json({ error: 'title・priceが必要です。' });
-    }
-
-    const sku = `MERCARI-${Date.now()}`;
-    await saveListing({
-      sku,
-      listingId: sku,
-      title,
-      price,
-      imageUrl,
-      category: category || 'Other',
-      platform: 'mercari',
-      status: 'MANUAL',
-    });
-
-    return res.json({ success: true, listingId: sku });
-  } catch (error) {
-    console.error('メルカリ出品記録エラー:', error);
-    return res.status(500).json({ error: '出品履歴の記録に失敗しました。' });
   }
 });
 
@@ -422,7 +370,6 @@ app.get('/api/listings', async (req, res) => {
       status: row.status,
       date: row.created_at.split('T')[0],
       imageUrl: row.image_url || undefined,
-      platform: row.platform || 'ebay',
     }));
 
     return res.json({ recentListings, salesSummary });
@@ -442,29 +389,6 @@ app.get('/api/analytics', async (req, res) => {
   } catch (error) {
     console.error('分析データの取得に失敗しました:', error);
     return res.status(500).json({ error: '分析データの取得に失敗しました。' });
-  }
-});
-
-// =================================================================
-// ジャンル比較エンドポイント (/api/genre-comparison)
-// 出品を検討している複数ジャンル(キーワード)について、eBay Browse APIの
-// 現在のアクティブ出品状況(件数・価格帯)から相対的な需要スコアを算出する。
-// =================================================================
-app.post('/api/genre-comparison', async (req, res) => {
-  try {
-    const { genres } = req.body;
-    if (!Array.isArray(genres) || genres.length < 2) {
-      return res.status(400).json({ error: '比較するジャンルを2件以上指定してください。' });
-    }
-    if (genres.length > 6) {
-      return res.status(400).json({ error: '比較できるジャンルは最大6件までです。' });
-    }
-
-    const results = await compareGenres(genres);
-    return res.json({ results });
-  } catch (error) {
-    console.error('ジャンル比較の取得に失敗しました:', error?.response?.data || error);
-    return res.status(500).json({ error: 'ジャンル比較の取得に失敗しました。' });
   }
 });
 

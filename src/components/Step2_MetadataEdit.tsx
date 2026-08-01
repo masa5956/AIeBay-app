@@ -1,5 +1,4 @@
-import { MERCARI_CONDITIONS, type ProductData } from '../types/listing';
-import { useLanguage } from '../i18n/LanguageContext';
+import type { ProductData } from '../types/listing';
 
 interface Step2MetadataEditProps {
   productData: ProductData;
@@ -23,12 +22,11 @@ export default function Step2_MetadataEdit({
   onBack,
   onNext,
 }: Step2MetadataEditProps) {
-  const { t } = useLanguage();
   const condition = productData.analysis?.conditionAssessment;
 
   return (
     <div className="space-y-4">
-      <h2 className="text-sm font-bold text-slate-700">{t('step2Title')}</h2>
+      <h2 className="text-sm font-bold text-slate-700">AI解析情報の補正</h2>
       {productData.imageUrl && (
         <img
           src={productData.imageUrl}
@@ -41,20 +39,20 @@ export default function Step2_MetadataEdit({
       {condition && (
         <div className={`border rounded-lg p-3 space-y-1.5 ${scoreColorClasses(condition.conditionScore)}`}>
           <div className="flex justify-between items-center">
-            <span className="text-[10px] font-bold uppercase">{t('conditionAssessmentTitle')}</span>
+            <span className="text-[10px] font-bold uppercase">AIによる商品状態評価</span>
             <span className="text-xs font-black">
               {condition.conditionLabel} ({condition.conditionScore}/100)
             </span>
           </div>
           <p className="text-[11px] leading-relaxed">
-            {condition.defects.length > 0 ? condition.defects.join(' / ') : t('conditionDefectsNone')}
+            {condition.defects.length > 0 ? condition.defects.join(' / ') : '目立った欠陥は検出されませんでした'}
           </p>
           {condition.notes && <p className="text-[10px] opacity-80">{condition.notes}</p>}
         </div>
       )}
 
       <div>
-        <label className="text-xs font-semibold text-slate-500">{t('fieldTitle')}</label>
+        <label className="text-xs font-semibold text-slate-500">タイトル (Max 80文字)</label>
         <input
           type="text"
           value={productData.title}
@@ -62,63 +60,32 @@ export default function Step2_MetadataEdit({
           onChange={(e) => onChange({ ...productData, title: e.target.value })}
           className="w-full border border-slate-200 p-2 rounded-lg text-sm mt-1 focus:ring-2 focus:ring-blue-500 outline-none"
         />
-        <span className="text-[10px] text-slate-400 block text-right">
-          {productData.title.length}/80{t('charCount')}
-        </span>
+        <span className="text-[10px] text-slate-400 block text-right">{productData.title.length}/80文字</span>
       </div>
 
-      {productData.platform === 'mercari' ? (
+      <div className="grid grid-cols-2 gap-2">
         <div>
-          <label className="text-xs font-semibold text-slate-500">{t('fieldMercariCategory')}</label>
+          <label className="text-xs font-semibold text-slate-500">ブランド</label>
           <input
             type="text"
-            value={productData.mercariCategorySuggestion || ''}
-            onChange={(e) => onChange({ ...productData, mercariCategorySuggestion: e.target.value })}
+            value={productData.brand}
+            onChange={(e) => onChange({ ...productData, brand: e.target.value })}
             className="w-full border border-slate-200 p-2 rounded-lg text-sm mt-1"
           />
         </div>
-      ) : (
-        <div className="grid grid-cols-2 gap-2">
-          <div>
-            <label className="text-xs font-semibold text-slate-500">{t('fieldBrand')}</label>
-            <input
-              type="text"
-              value={productData.brand}
-              onChange={(e) => onChange({ ...productData, brand: e.target.value })}
-              className="w-full border border-slate-200 p-2 rounded-lg text-sm mt-1"
-            />
-          </div>
-          <div>
-            <label className="text-xs font-semibold text-slate-500">{t('fieldModel')}</label>
-            <input
-              type="text"
-              value={productData.model}
-              onChange={(e) => onChange({ ...productData, model: e.target.value })}
-              className="w-full border border-slate-200 p-2 rounded-lg text-sm mt-1"
-            />
-          </div>
-        </div>
-      )}
-
-      {productData.platform === 'mercari' && (
         <div>
-          <label className="text-xs font-semibold text-slate-500">{t('fieldMercariCondition')}</label>
-          <select
-            value={productData.mercariCondition || MERCARI_CONDITIONS[0]}
-            onChange={(e) => onChange({ ...productData, mercariCondition: e.target.value as ProductData['mercariCondition'] })}
-            className="w-full border border-slate-200 p-2 rounded-lg text-sm mt-1 bg-white"
-          >
-            {MERCARI_CONDITIONS.map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-          </select>
+          <label className="text-xs font-semibold text-slate-500">型番</label>
+          <input
+            type="text"
+            value={productData.model}
+            onChange={(e) => onChange({ ...productData, model: e.target.value })}
+            className="w-full border border-slate-200 p-2 rounded-lg text-sm mt-1"
+          />
         </div>
-      )}
+      </div>
 
       <div>
-        <label className="text-xs font-semibold text-slate-500">{t('fieldDescription')}</label>
+        <label className="text-xs font-semibold text-slate-500">商品説明</label>
         <textarea
           value={productData.description}
           onChange={(e) => onChange({ ...productData, description: e.target.value })}
@@ -127,10 +94,10 @@ export default function Step2_MetadataEdit({
         />
       </div>
 
-      {/* 商品仕様 (Item Specifics) — eBayのみ */}
-      {productData.platform === 'ebay' && productData.aspects.length > 2 && (
+      {/* 商品仕様 (Item Specifics) */}
+      {productData.aspects.length > 2 && (
         <div>
-          <label className="text-xs font-semibold text-slate-500">{t('fieldItemSpecifics')}</label>
+          <label className="text-xs font-semibold text-slate-500">商品仕様 (Item Specifics)</label>
           <div className="grid grid-cols-2 gap-2 mt-1">
             {productData.aspects.slice(2).map((aspect, i) => (
               <div key={aspect.key}>
@@ -149,13 +116,13 @@ export default function Step2_MetadataEdit({
 
       <div className="flex gap-2">
         <button onClick={onBack} className="w-1/2 border py-3 rounded-lg text-xs font-bold text-slate-600">
-          {t('back')}
+          戻る
         </button>
         <button
           onClick={onNext}
           className="w-1/2 bg-gradient-to-r from-blue-600 to-blue-500 text-white font-bold py-3 rounded-lg hover:from-blue-700 hover:to-blue-600 transition text-xs"
         >
-          {t('proceedToPricing')}
+          価格調整へ進む
         </button>
       </div>
     </div>

@@ -1,12 +1,5 @@
-import type {
-  CompetitorSuggestions,
-  ConditionAssessment,
-  MarketTrend,
-  Platform,
-  ProductAspect,
-  ProductData,
-} from '../types/listing';
-import type { AnalyticsData, GenreComparisonResult, RecentListing, SalesSummary } from '../types/app';
+import type { CompetitorSuggestions, ConditionAssessment, MarketTrend, ProductAspect, ProductData } from '../types/listing';
+import type { AnalyticsData, RecentListing, SalesSummary } from '../types/app';
 import { mockProductData } from '../mock/mockData';
 
 const BACKEND_URL = `${import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001'}/api`;
@@ -28,14 +21,11 @@ export const mockPublishItem = async (
   return { success: true, listingId: `MOCK-${Date.now()}` };
 };
 
-// 1. 画像をバックエンドへ送りAI解析を行いProductDataを組み立てる。
-//    platform='ebay'（既定）: 基本抽出＋商品状態エージェントに続けて価格・市場トレンド・競合比較・総合スコアを取得。
-//    platform='mercari': メルカリには自動出品APIが無いため、日本語の出品文言を生成するのみで
-//    価格査定(eBay Browse API)は呼ばない。価格はユーザーがStep3で手動設定する。
-export const analyzeImageWithAI = async (imageFile: File, platform: Platform = 'ebay'): Promise<ProductData> => {
+// 1. 画像をバックエンドへ送りAI解析（基本抽出＋商品状態エージェント）を行い、
+//    続けて価格・市場トレンド・競合比較・総合スコアの分析も取得してProductDataを組み立てる
+export const analyzeImageWithAI = async (imageFile: File): Promise<ProductData> => {
   const formData = new FormData();
   formData.append('image', imageFile);
-  formData.append('platform', platform);
 
   const response = await fetch(`${BACKEND_URL}/analyze-image`, {
     method: 'POST',
@@ -48,26 +38,6 @@ export const analyzeImageWithAI = async (imageFile: File, platform: Platform = '
 
   const aiResult = await response.json();
   const conditionAssessment: ConditionAssessment | undefined = aiResult.conditionAssessment;
-  // Supabase Storageへのアップロードに成功していれば公開URL、失敗時のみローカルのblob:にフォールバック
-  const imageUrl = aiResult.imageUrl || URL.createObjectURL(imageFile);
-
-  if (platform === 'mercari') {
-    return {
-      platform: 'mercari',
-      imageUrl,
-      title: aiResult.title || '',
-      brand: aiResult.brand || '',
-      model: aiResult.model || '',
-      categoryName: 'General',
-      condition: 'USED_GOOD', // メルカリフローでは未使用（UI非表示）
-      aspects: [],
-      description: aiResult.description || '',
-      pricing: { suggestedPrice: 0, minPrice: 0, maxPrice: 0, userPrice: 0, acceptOffer: false },
-      analysis: { conditionAssessment },
-      mercariCondition: aiResult.mercariCondition,
-      mercariCategorySuggestion: aiResult.mercariCategorySuggestion,
-    };
-  }
 
   // AIが返したItem Specifics（Brand/Model以外）をProductAspect[]に変換
   const extraAspects: ProductAspect[] = Object.entries(aiResult.aspects || {})
@@ -91,8 +61,8 @@ export const analyzeImageWithAI = async (imageFile: File, platform: Platform = '
   );
 
   return {
-    platform: 'ebay',
-    imageUrl,
+    // Supabase Storageへのアップロードに成功していれば公開URL、失敗時のみローカルのblob:にフォールバック
+    imageUrl: aiResult.imageUrl || URL.createObjectURL(imageFile),
     title,
     brand: aiResult.brand || '',
     model: aiResult.model || '',
@@ -171,30 +141,6 @@ export const publishToEbay = async (productData: ProductData): Promise<{ success
   return await response.json();
 };
 
-// 3b. メルカリへの手動出品完了をアプリの履歴(DB)に記録する。
-//     メルカリには自動出品APIが無いため、外部への出品リクエストは発生しない
-//     （ユーザーがメルカリアプリ/サイトへ手動でコピー&ペーストして出品した後に呼び出す）。
-export const completeMercariListing = async (
-  productData: ProductData
-): Promise<{ success: boolean; listingId: string }> => {
-  const response = await fetch(`${BACKEND_URL}/mercari/complete`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      title: productData.title,
-      price: productData.pricing.userPrice,
-      imageUrl: productData.imageUrl,
-      category: productData.mercariCategorySuggestion,
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error('出品履歴の記録に失敗しました');
-  }
-
-  return await response.json();
-};
-
 // 4. 最近の出品一覧・売上サマリーをバックエンド(DB)から取得する
 export const getListings = async (): Promise<{ recentListings: RecentListing[]; salesSummary: SalesSummary }> => {
   const response = await fetch(`${BACKEND_URL}/listings`);
@@ -211,19 +157,4 @@ export const getAnalytics = async (): Promise<AnalyticsData> => {
     throw new Error('分析データの取得に失敗しました');
   }
   return await response.json();
-};
-
-// 6. 出品を検討している複数ジャンル(キーワード)をeBay Browse APIの現況で比較する
-export const compareGenres = async (genres: string[]): Promise<GenreComparisonResult[]> => {
-  const response = await fetch(`${BACKEND_URL}/genre-comparison`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ genres }),
-  });
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    throw new Error(data.error || 'ジャンル比較の取得に失敗しました');
-  }
-  const data = await response.json();
-  return data.results;
 };
