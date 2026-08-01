@@ -7,6 +7,28 @@ dotenv.config();
 
 const MARKETPLACE_ID = 'EBAY_US';
 
+// Business Policy機能(Selling Policy Management)へのオプトイン。
+// 新規作成したSandboxテストユーザーはデフォルトで無効になっており、
+// 有効化しないままポリシー作成APIを呼ぶと「User is not eligible for Business Policy」エラーになる。
+async function ensureBusinessPolicyOptIn(token) {
+  try {
+    await axios.post(
+      `${EBAY_BASE_URL}/sell/account/v1/program/opt_in`,
+      { programType: 'SELLING_POLICY_MANAGEMENT' },
+      { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
+    );
+    console.log('Business Policy(SELLING_POLICY_MANAGEMENT)へのオプトインが完了しました。');
+  } catch (err) {
+    // 既にオプトイン済みの場合はエラーになることがあるため、その場合は無視して続行する
+    const errorId = err?.response?.data?.errors?.[0]?.errorId;
+    if (errorId === 20401 || errorId === 20400) {
+      console.log('既にBusiness Policyへオプトイン済みです。');
+      return;
+    }
+    throw err;
+  }
+}
+
 // 配送ポリシーを取得、無ければ最低限の内容で新規作成する
 async function ensureFulfillmentPolicy(token) {
   const listRes = await axios.get(`${EBAY_BASE_URL}/sell/account/v1/fulfillment_policy`, {
@@ -141,6 +163,8 @@ async function ensureMerchantLocation(token) {
 async function main() {
   console.log('eBay Business Policies / 出荷元ロケーションのセットアップを開始します...');
   const token = await getUserAccessToken();
+
+  await ensureBusinessPolicyOptIn(token);
 
   const fulfillmentPolicyId = await ensureFulfillmentPolicy(token);
   const returnPolicyId = await ensureReturnPolicy(token);
