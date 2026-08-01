@@ -1,12 +1,15 @@
+import type { Platform } from './listing';
+
 export type TabType = 'home' | 'analytics' | 'settings';
 
 export interface RecentListing {
   id: string;
   title: string;
   price: number;
-  status: 'ACTIVE' | 'SOLD' | 'DRAFT';
+  status: 'ACTIVE' | 'SOLD' | 'DRAFT' | 'MANUAL';
   date: string;
   imageUrl?: string;
+  platform: Platform;
 }
 
 export interface SalesSummary {

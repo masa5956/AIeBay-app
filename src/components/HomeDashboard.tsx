@@ -89,11 +89,23 @@ export default function HomeDashboard({ salesSummary, recentListings, onStartLis
               className="bg-white border border-slate-200 rounded-xl p-3 flex justify-between items-center shadow-sm hover:border-blue-200 hover:shadow-md transition"
             >
               <div className="space-y-1 max-w-[200px]">
-                <p className="text-xs font-bold text-slate-800 truncate">{item.title}</p>
+                <div className="flex items-center gap-1.5">
+                  <span
+                    className={`text-[8px] font-bold px-1.5 py-0.5 rounded ${
+                      item.platform === 'mercari' ? 'bg-red-50 text-red-500' : 'bg-blue-50 text-blue-500'
+                    }`}
+                  >
+                    {item.platform === 'mercari' ? 'メルカリ' : 'eBay'}
+                  </span>
+                  <p className="text-xs font-bold text-slate-800 truncate">{item.title}</p>
+                </div>
                 <p className="text-[10px] text-slate-400">{item.date}</p>
               </div>
               <div className="text-right">
-                <p className="text-xs font-black text-slate-900">${item.price}</p>
+                <p className="text-xs font-black text-slate-900">
+                  {item.platform === 'mercari' ? '¥' : '$'}
+                  {item.price}
+                </p>
                 <span
                   className={`inline-block text-[9px] font-bold px-2 py-0.5 rounded-full ${
                     item.status === 'ACTIVE' ? 'bg-blue-50 text-blue-600' : 'bg-emerald-50 text-emerald-600'

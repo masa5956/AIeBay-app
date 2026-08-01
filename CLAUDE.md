@@ -16,6 +16,11 @@ Gemini（Vision）またはGroq（Vision）が画像解析を行い、複数のA
 Supabase（Postgres + Storage）に永続化される。詳細な要件・API契約は
 [PROJECT_REQUIREMENTS.md](PROJECT_REQUIREMENTS.md) を参照。
 
+出品先は`platform`（`ebay` / `mercari`）で切替可能。**メルカリには第三者向けの自動出品APIが存在しないため**、
+メルカリ選択時はAIが日本語の出品文言（タイトル・説明文・カテゴリ提案・商品の状態）を生成するのみで、
+実際の出品はユーザーがメルカリアプリ/サイトへ手動でコピー&ペーストして行う（詳細は
+[メルカリ対応](#メルカリ対応)を参照）。
+
 ## よく使うコマンド
 
 ```bash
@@ -43,7 +48,7 @@ Vite + React 18 + TypeScript + Tailwind CSS + `lucide-react`（アイコン） +
 | [HomeDashboard.tsx](src/components/HomeDashboard.tsx) | ホーム。`getListings()`で取得した売上サマリー・最近の出品を表示（マウント時・出品成功後に再取得） |
 | [AnalyticsPanel.tsx](src/components/AnalyticsPanel.tsx) | 分析。`getAnalytics()`による月別出品額推移・カテゴリ別出品額構成グラフ＋[GenreComparisonPanel.tsx](src/components/GenreComparisonPanel.tsx)（ジャンル比較） |
 | [SettingsPanel.tsx](src/components/SettingsPanel.tsx) | 設定。言語切替と、開発者向け「AI解析をモックデータで代用」トグル（ON時は`mockAnalyzeImage`を使いGemini/Groqのクォータを消費しない。出品自体は実APIのまま） |
-| [Step1_ImageUpload.tsx](src/components/Step1_ImageUpload.tsx)〜[Step4_Preview.tsx](src/components/Step4_Preview.tsx) | 出品ウィザード（撮影→AI解析結果補正→価格調整→最終確認）。[StepperHeader.tsx](src/components/StepperHeader.tsx)クリックでステップ間移動可（解析結果が無いうちはStep2以降へ移動不可） |
+| [Step1_ImageUpload.tsx](src/components/Step1_ImageUpload.tsx)〜[Step4_Preview.tsx](src/components/Step4_Preview.tsx) | 出品ウィザード（出品先選択→撮影→AI解析結果補正→価格調整→最終確認）。Step1の`platform`（`ebay`/`mercari`）切替でStep2〜4の表示・挙動が分岐する（詳細は[メルカリ対応](#メルカリ対応)）。[StepperHeader.tsx](src/components/StepperHeader.tsx)クリックでステップ間移動可（解析結果が無いうちはStep2以降へ移動不可） |
 | [Toast.tsx](src/components/Toast.tsx) / [CancelConfirmDialog.tsx](src/components/CancelConfirmDialog.tsx) | 完了・失敗通知 / 出品キャンセル確認 |
 | [BottomNav.tsx](src/components/BottomNav.tsx) | ホーム/分析/設定のタブ切替 |
 
@@ -51,13 +56,14 @@ Vite + React 18 + TypeScript + Tailwind CSS + `lucide-react`（アイコン） +
   `LanguageContext.tsx`の`useLanguage()`（`language`, `setLanguage`, `t()`）を各コンポーネントから呼び出す。選択言語は
   `localStorage`に永続化。**eBayへ実際に送信する出品文（title/description）は英語固定のままで、この切替はアプリUIの
   表示言語のみに影響する。**
-- **型定義**: [src/types/listing.ts](src/types/listing.ts)（`ProductData`, `Condition`, AIマルチエージェント分析結果の型）、
-  [src/types/app.ts](src/types/app.ts)（`TabType`, `RecentListing`, `SalesSummary`, `AnalyticsData`, `GenreComparisonResult`）。
+- **型定義**: [src/types/listing.ts](src/types/listing.ts)（`ProductData`, `Condition`, `Platform`, `MERCARI_CONDITIONS`、
+  AIマルチエージェント分析結果の型）、[src/types/app.ts](src/types/app.ts)（`TabType`, `RecentListing`, `SalesSummary`,
+  `AnalyticsData`, `GenreComparisonResult`）。
 - **APIクライアント層**: [src/services/listingService.ts](src/services/listingService.ts)。
-  `analyzeImageWithAI` / `estimatePrice` / `publishToEbay` / `getListings` / `getAnalytics` / `compareGenres`が
-  バックエンド（既定`http://localhost:3001/api`、`VITE_BACKEND_URL`で変更可）を呼び出す実装。
-  `mockAnalyzeImage` / `mockPublishItem`（[src/mock/mockData.ts](src/mock/mockData.ts)のサンプルデータ）は
-  設定タブのモックトグルやオフライン確認用。
+  `analyzeImageWithAI(imageFile, platform)` / `estimatePrice` / `publishToEbay` / `completeMercariListing` /
+  `getListings` / `getAnalytics` / `compareGenres`がバックエンド（既定`http://localhost:3001/api`、
+  `VITE_BACKEND_URL`で変更可）を呼び出す実装。`mockAnalyzeImage` / `mockPublishItem`
+  （[src/mock/mockData.ts](src/mock/mockData.ts)のサンプルデータ）は設定タブのモックトグルやオフライン確認用。
 
 ### バックエンド
 
@@ -65,10 +71,11 @@ Vite + React 18 + TypeScript + Tailwind CSS + `lucide-react`（アイコン） +
 
 | Method / Path | 概要 |
 |---|---|
-| `POST /api/analyze-image` | 画像を`aiProvider.js`経由でGemini/Groqに渡しタイトル・ブランド・型番・状態・説明文・商品仕様(aspects)をJSON抽出。商品状態エージェント（`runConditionAgent`）とSupabase Storageへの画像アップロード（`uploadProductImage`）を`Promise.all`で並列実行 |
-| `POST /api/estimate-price` | eBay Browse APIで類似商品検索→IQRで外れ値除去した価格統計＋市場トレンド/競合比較エージェント＋決定的な総合判定スコア（`scoreListing`）を算出 |
-| `POST /api/publish-ebay` | Sell Inventory API（Inventory Item→Offer→Publish）で出品確定。必須Item Specifics（Brand/Color/Connectivity/Model/Type、フォールバックの`categoryId=112529`が要求）を既定値で補完。成功後`saveListing()`でSupabaseに履歴保存 |
-| `GET /api/listings` | Supabaseの`listings`から最近の出品一覧・売上サマリーを取得（ホーム画面用） |
+| `POST /api/analyze-image` | 画像とform-dataの`platform`（`ebay`/`mercari`）を受け取り、`aiProvider.js`経由でGemini/Groqにplatform別プロンプトを渡してJSON抽出（eBay: 英語のタイトル/ブランド/型番/状態/説明文/aspects、mercari: 日本語のタイトル/商品の状態/カテゴリ提案/説明文）。商品状態エージェント（`runConditionAgent`）とSupabase Storageへの画像アップロード（`uploadProductImage`）はplatformによらず共通で`Promise.all`実行 |
+| `POST /api/estimate-price` | eBay Browse APIで類似商品検索→IQRで外れ値除去した価格統計＋市場トレンド/競合比較エージェント＋決定的な総合判定スコア（`scoreListing`）を算出（eBayのみ、mercariでは呼ばれない） |
+| `POST /api/publish-ebay` | Sell Inventory API（Inventory Item→Offer→Publish）で出品確定。必須Item Specifics（Brand/Color/Connectivity/Model/Type、フォールバックの`categoryId=112529`が要求）を既定値で補完。成功後`saveListing({..., platform:'ebay'})`でSupabaseに履歴保存 |
+| `POST /api/mercari/complete` | メルカリには自動出品APIが無いため、外部リクエストは一切発生しない。ユーザーがメルカリアプリ/サイトへ手動出品した後に`saveListing({..., platform:'mercari', status:'MANUAL'})`で履歴に記録するだけの登録用エンドポイント |
+| `GET /api/listings` | Supabaseの`listings`から最近の出品一覧・売上サマリーを取得（ホーム画面用、platform問わず横断表示） |
 | `GET /api/analytics` | 月別出品額推移（直近6ヶ月）・カテゴリ別出品額構成を集計（分析タブ用） |
 | `POST /api/genre-comparison` | `{genres: string[]}`（2〜6件）についてeBay Browse APIの出品件数・価格帯からLLM不使用の決定的な需要スコアを算出・比較 |
 | `GET /api/ebay/auth-url` / `GET /api/ebay/callback` | eBayユーザー同意フロー（初回セットアップ用） |
@@ -92,7 +99,7 @@ Vite + React 18 + TypeScript + Tailwind CSS + `lucide-react`（アイコン） +
 | [server/envFile.js](server/envFile.js) | `.env`の特定キーをその場で書き換える`updateEnvValue()` |
 | [server/setupPolicies.js](server/setupPolicies.js) | （`npm run setup:policies`）配送・返品ポリシーと出荷元ロケーションの初回セットアップ。`ensureBusinessPolicyOptIn()`で事前にBusiness Policy機能へオプトイン（新規Sandboxユーザーはデフォルト無効なため） |
 | [server/supabaseClient.js](server/supabaseClient.js) | Supabaseクライアント（`service_role`キー使用）。`SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY`未設定時は`supabase`が`null`になり、関連機能のみ安全にスキップ（サーバー全体は落ちない） |
-| [server/listingsRepository.js](server/listingsRepository.js) | `listings`テーブルへの読み書き（`saveListing` / `getRecentListings` / `getSalesSummary` / `getAnalytics`） |
+| [server/listingsRepository.js](server/listingsRepository.js) | `listings`テーブルへの読み書き（`saveListing({..., platform, status})` / `getRecentListings` / `getSalesSummary` / `getAnalytics`）。`platform`は`'ebay'`/`'mercari'`、`status`はeBayなら`'ACTIVE'`、メルカリの手動出品記録なら`'MANUAL'` |
 
 ### データベース（Supabase）
 
@@ -109,11 +116,29 @@ create table public.listings (
   status text not null default 'ACTIVE',
   image_url text,
   category text not null default 'Other',
+  platform text not null default 'ebay',
   created_at timestamptz not null default now()
 );
 ```
 
 さらにStorageに`product-images`という**Public**バケットを作成（撮影画像の公開URL発行に使用）。
+
+## メルカリ対応
+
+**メルカリには第三者向けの自動出品APIが公式には存在しない**（eBayのSell Inventory APIに相当するものが無い）。
+非公式の内部APIを叩く方法は利用規約違反・アカウント停止リスクがあるため実装していない。そのため、Step1で
+`platform: 'mercari'`を選択した場合のみ以下のように動作が変わる。
+
+- `POST /api/analyze-image`が`MERCARI_ANALYSIS_PROMPT`（[server/index.js](server/index.js)）を使い、
+  日本語のタイトル（40文字以内）・商品の状態（[src/types/listing.ts](src/types/listing.ts)の`MERCARI_CONDITIONS`
+  6段階）・カテゴリ提案・説明文をJSON生成する。商品状態評価エージェントと画像アップロードはeBayと共通。
+- Step3では価格を比較材料なしでユーザーが直接入力する（メルカリの売却実績データは公式に取得できないため、
+  eBay Browse APIのような相場算出は行わない）。
+- Step4では「eBayに出品する」ボタンの代わりに、タイトル・価格・カテゴリ・状態・説明文をそれぞれ
+  コピーできるカード（[Step4_Preview.tsx](src/components/Step4_Preview.tsx)）を表示し、ユーザーが
+  メルカリアプリ/サイトへ手動で貼り付けて出品する。完了後は`completeMercariListing()`→
+  `POST /api/mercari/complete`でアプリの履歴（ホーム画面・分析タブ）に記録するのみで、外部への
+  出品リクエストは一切発生しない。
 
 ## eBay連携の初回セットアップ手順
 

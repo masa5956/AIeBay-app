@@ -1,4 +1,4 @@
-import type { ProductData } from '../types/listing';
+import { MERCARI_CONDITIONS, type ProductData } from '../types/listing';
 import { useLanguage } from '../i18n/LanguageContext';
 
 interface Step2MetadataEditProps {
@@ -67,26 +67,55 @@ export default function Step2_MetadataEdit({
         </span>
       </div>
 
-      <div className="grid grid-cols-2 gap-2">
+      {productData.platform === 'mercari' ? (
         <div>
-          <label className="text-xs font-semibold text-slate-500">{t('fieldBrand')}</label>
+          <label className="text-xs font-semibold text-slate-500">{t('fieldMercariCategory')}</label>
           <input
             type="text"
-            value={productData.brand}
-            onChange={(e) => onChange({ ...productData, brand: e.target.value })}
+            value={productData.mercariCategorySuggestion || ''}
+            onChange={(e) => onChange({ ...productData, mercariCategorySuggestion: e.target.value })}
             className="w-full border border-slate-200 p-2 rounded-lg text-sm mt-1"
           />
         </div>
-        <div>
-          <label className="text-xs font-semibold text-slate-500">{t('fieldModel')}</label>
-          <input
-            type="text"
-            value={productData.model}
-            onChange={(e) => onChange({ ...productData, model: e.target.value })}
-            className="w-full border border-slate-200 p-2 rounded-lg text-sm mt-1"
-          />
+      ) : (
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="text-xs font-semibold text-slate-500">{t('fieldBrand')}</label>
+            <input
+              type="text"
+              value={productData.brand}
+              onChange={(e) => onChange({ ...productData, brand: e.target.value })}
+              className="w-full border border-slate-200 p-2 rounded-lg text-sm mt-1"
+            />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-slate-500">{t('fieldModel')}</label>
+            <input
+              type="text"
+              value={productData.model}
+              onChange={(e) => onChange({ ...productData, model: e.target.value })}
+              className="w-full border border-slate-200 p-2 rounded-lg text-sm mt-1"
+            />
+          </div>
         </div>
-      </div>
+      )}
+
+      {productData.platform === 'mercari' && (
+        <div>
+          <label className="text-xs font-semibold text-slate-500">{t('fieldMercariCondition')}</label>
+          <select
+            value={productData.mercariCondition || MERCARI_CONDITIONS[0]}
+            onChange={(e) => onChange({ ...productData, mercariCondition: e.target.value as ProductData['mercariCondition'] })}
+            className="w-full border border-slate-200 p-2 rounded-lg text-sm mt-1 bg-white"
+          >
+            {MERCARI_CONDITIONS.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
 
       <div>
         <label className="text-xs font-semibold text-slate-500">{t('fieldDescription')}</label>
@@ -98,8 +127,8 @@ export default function Step2_MetadataEdit({
         />
       </div>
 
-      {/* 商品仕様 (Item Specifics) */}
-      {productData.aspects.length > 2 && (
+      {/* 商品仕様 (Item Specifics) — eBayのみ */}
+      {productData.platform === 'ebay' && productData.aspects.length > 2 && (
         <div>
           <label className="text-xs font-semibold text-slate-500">{t('fieldItemSpecifics')}</label>
           <div className="grid grid-cols-2 gap-2 mt-1">

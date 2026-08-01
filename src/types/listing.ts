@@ -1,5 +1,21 @@
+// 出品先プラットフォーム。メルカリには第三者向けの自動出品APIが存在しないため、
+// メルカリ選択時はAIが日本語の出品文言を生成するのみで、実際の出品はユーザーが
+// メルカリアプリ/サイトへ手動でコピー&ペーストして行う（eBayのような自動出品API連携は無い）。
+export type Platform = 'ebay' | 'mercari';
+
 // 商品のコンディション区分（eBayのcondition列挙値に対応）
 export type Condition = 'NEW' | 'USED_EXCELLENT' | 'USED_GOOD' | 'USED_FAIR';
+
+// メルカリ出品フォームの商品の状態（6段階、メルカリの実際の選択肢に準拠）
+export const MERCARI_CONDITIONS = [
+  '新品、未使用',
+  '未使用に近い',
+  '目立った傷や汚れなし',
+  'やや傷や汚れあり',
+  '傷や汚れあり',
+  '全体的に状態が悪い',
+] as const;
+export type MercariCondition = (typeof MERCARI_CONDITIONS)[number];
 
 // 商品1点分のアスペクト（Brand, Modelなどeayの項目属性）
 export interface ProductAspect {
@@ -47,6 +63,7 @@ export interface ListingAnalysis {
 
 // 出品ウィザードで扱う商品データ本体
 export interface ProductData {
+  platform: Platform;
   imageUrl?: string;
   title: string;
   brand: string;
@@ -57,4 +74,7 @@ export interface ProductData {
   description: string;
   pricing: PricingInfo;
   analysis?: ListingAnalysis;
+  // platform === 'mercari' のときのみ使用
+  mercariCondition?: MercariCondition;
+  mercariCategorySuggestion?: string;
 }

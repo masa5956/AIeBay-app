@@ -1,16 +1,19 @@
 import { supabase } from './supabaseClient.js';
 
 // 出品成功時にlistingsテーブルへ1件保存する
-export async function saveListing({ sku, listingId, title, price, imageUrl, category }) {
+// platform: 'ebay'（API経由で出品確定済み、status='ACTIVE'）または
+// 'mercari'（メルカリには自動出品APIが無いため、ユーザーが手動出品した後の記録。status='MANUAL'）
+export async function saveListing({ sku, listingId, title, price, imageUrl, category, platform = 'ebay', status }) {
   if (!supabase) return; // Supabase未設定時は履歴保存をスキップ（出品自体は成功させる）
   const { error } = await supabase.from('listings').insert({
     sku,
     listing_id: listingId,
     title,
     price,
-    status: 'ACTIVE',
+    status: status || 'ACTIVE',
     image_url: imageUrl || null,
     category: category || 'Other',
+    platform,
   });
   if (error) throw error;
 }

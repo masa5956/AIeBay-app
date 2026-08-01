@@ -1,7 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import type { TabType, RecentListing, SalesSummary } from './types/app';
-import type { ProductData } from './types/listing';
-import { analyzeImageWithAI, getListings, mockAnalyzeImage, publishToEbay } from './services/listingService';
+import type { Platform, ProductData } from './types/listing';
+import {
+  analyzeImageWithAI,
+  completeMercariListing,
+  getListings,
+  mockAnalyzeImage,
+  publishToEbay,
+} from './services/listingService';
 import { useLanguage } from './i18n/LanguageContext';
 import BottomNav from './components/BottomNav';
 import Toast, { type Feedback } from './components/Toast';
@@ -23,6 +29,8 @@ export default function App() {
   // 出品フロー実行中かどうか
   const [isListingMode, setIsListingMode] = useState<boolean>(false);
 
+  // 出品先プラットフォーム（メルカリには自動出品APIが無いため、選択に応じてAI出力言語・出品方法が切替わる）
+  const [platform, setPlatform] = useState<Platform>('ebay');
   // 出品ステッパー用状態
   const [step, setStep] = useState<number>(1);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -82,7 +90,7 @@ export default function App() {
     setIsLoading(true);
     setLoadingText(t('loadingAnalyzing'));
     try {
-      const result = useMockAnalysis ? await mockAnalyzeImage(file) : await analyzeImageWithAI(file);
+      const result = useMockAnalysis ? await mockAnalyzeImage(file) : await analyzeImageWithAI(file, platform);
       setProductData(result);
       setStep(2);
     } catch (err) {
@@ -107,15 +115,25 @@ export default function App() {
     setProductData({ ...productData, aspects: updatedAspects });
   };
 
-  // 出品処理
+  // 出品処理（eBay: 実APIで出品確定 / メルカリ: 手動出品完了をアプリの履歴に記録するのみ）
   const handlePublish = async () => {
     if (!productData) return;
     setIsLoading(true);
-    setLoadingText(t('loadingPublishing'));
+    setLoadingText(productData.platform === 'mercari' ? t('loadingMercariComplete') : t('loadingPublishing'));
     try {
-      const result = await publishToEbay(productData);
+      const result =
+        productData.platform === 'mercari'
+          ? await completeMercariListing(productData)
+          : await publishToEbay(productData);
+
       if (result.success) {
-        setFeedback({ type: 'success', message: `${t('publishSuccessPrefix')} ${result.listingId}）` });
+        setFeedback({
+          type: 'success',
+          message:
+            productData.platform === 'mercari'
+              ? t('mercariCompleteSuccess')
+              : `${t('publishSuccessPrefix')} ${result.listingId}）`,
+        });
 
         await refreshListings();
 
@@ -124,7 +142,10 @@ export default function App() {
         setProductData(null);
       }
     } catch (err) {
-      setFeedback({ type: 'error', message: t('publishFailure') });
+      setFeedback({
+        type: 'error',
+        message: productData.platform === 'mercari' ? t('mercariCompleteFailure') : t('publishFailure'),
+      });
     } finally {
       setIsLoading(false);
     }
@@ -171,7 +192,9 @@ export default function App() {
               </div>
             )}
 
-            {!isLoading && step === 1 && <Step1_ImageUpload onUpload={handleImageUpload} />}
+            {!isLoading && step === 1 && (
+              <Step1_ImageUpload platform={platform} onChangePlatform={setPlatform} onUpload={handleImageUpload} />
+            )}
 
             {!isLoading && step === 2 && productData && (
               <Step2_MetadataEdit

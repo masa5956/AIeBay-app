@@ -36,29 +36,50 @@ export default function Step3_Pricing({ productData, onChange, onBack, onNext }:
     <div className="space-y-4">
       <h2 className="text-sm font-bold text-slate-700">{t('step3Title')}</h2>
 
-      <div className="bg-blue-50 border border-blue-200 p-4 rounded-lg space-y-1">
-        <span className="text-[10px] font-bold text-blue-600 uppercase">{t('aiSuggestedPrice')}</span>
-        <div className="text-2xl font-black text-blue-900">${productData.pricing.suggestedPrice}</div>
-        <p className="text-[10px] text-slate-500">
-          {t('marketRange')}: ${productData.pricing.minPrice} - ${productData.pricing.maxPrice}
-        </p>
-      </div>
+      {productData.platform === 'mercari' ? (
+        <div>
+          <label className="text-xs font-semibold text-slate-500">{t('setPriceMercari')}</label>
+          <input
+            type="number"
+            step="1"
+            value={productData.pricing.userPrice}
+            onChange={(e) =>
+              onChange({
+                ...productData,
+                pricing: { ...productData.pricing, userPrice: parseFloat(e.target.value) || 0 },
+              })
+            }
+            className="w-full border border-slate-200 p-2 rounded-lg text-sm mt-1 font-bold"
+          />
+          <p className="text-[10px] text-slate-400 mt-1">{t('setPriceMercariNote')}</p>
+        </div>
+      ) : (
+        <>
+          <div className="bg-blue-50 border border-blue-200 p-4 rounded-lg space-y-1">
+            <span className="text-[10px] font-bold text-blue-600 uppercase">{t('aiSuggestedPrice')}</span>
+            <div className="text-2xl font-black text-blue-900">${productData.pricing.suggestedPrice}</div>
+            <p className="text-[10px] text-slate-500">
+              {t('marketRange')}: ${productData.pricing.minPrice} - ${productData.pricing.maxPrice}
+            </p>
+          </div>
 
-      <div>
-        <label className="text-xs font-semibold text-slate-500">{t('setPrice')}</label>
-        <input
-          type="number"
-          step="0.01"
-          value={productData.pricing.suggestedPrice}
-          onChange={(e) =>
-            onChange({
-              ...productData,
-              pricing: { ...productData.pricing, suggestedPrice: parseFloat(e.target.value) || 0 },
-            })
-          }
-          className="w-full border border-slate-200 p-2 rounded-lg text-sm mt-1 font-bold"
-        />
-      </div>
+          <div>
+            <label className="text-xs font-semibold text-slate-500">{t('setPrice')}</label>
+            <input
+              type="number"
+              step="0.01"
+              value={productData.pricing.suggestedPrice}
+              onChange={(e) =>
+                onChange({
+                  ...productData,
+                  pricing: { ...productData.pricing, suggestedPrice: parseFloat(e.target.value) || 0 },
+                })
+              }
+              className="w-full border border-slate-200 p-2 rounded-lg text-sm mt-1 font-bold"
+            />
+          </div>
+        </>
+      )}
 
       {/* 総合判定スコア */}
       {overallScore !== undefined && (
