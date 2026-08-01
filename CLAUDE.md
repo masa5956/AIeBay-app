@@ -11,17 +11,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## プロジェクト概要
 
 eBay向けのAI自動出品ツール。スマートフォン画面を模したReact SPAで、商品写真をアップロードすると
-Gemini（Vision）が画像解析を行い、eBayの類似商品価格を調査した上でeBayに出品するまでのウィザードUIを提供する。
-詳細な要件・API契約は [PROJECT_REQUIREMENTS.md](PROJECT_REQUIREMENTS.md) を参照。
+Gemini（Vision）が画像解析を行い、複数のAIエージェントが市場トレンド・競合比較・商品状態を多角的に分析した上で
+eBayに出品するまでのウィザードUIを提供する。詳細な要件・API契約は [PROJECT_REQUIREMENTS.md](PROJECT_REQUIREMENTS.md) を参照。
 
 ## よく使うコマンド
 
 ```bash
-npm run dev       # Vite開発サーバーを起動（フロントエンドのみ）
-npm run server    # server/index.js のExpressバックエンドを起動（要 .env、別ターミナルで実行）
-npm run build     # tsc（型チェック）→ vite build
-npm run preview   # ビルド済みアプリをローカルでプレビュー
-npm run lint      # oxlint による静的解析
+npm run dev            # Vite開発サーバーを起動（フロントエンドのみ）
+npm run server         # server/index.js のExpressバックエンドを起動（要 .env、別ターミナルで実行）
+npm run build          # tsc（型チェック）→ vite build
+npm run preview        # ビルド済みアプリをローカルでプレビュー
+npm run lint           # oxlint による静的解析
+npm run setup:policies # eBay Business Policies・出荷元ロケーションの初回セットアップ
 ```
 
 - フロントエンドは `npm run dev` と `npm run server` を両方起動して初めて実際の出品フローが動作する。
@@ -29,33 +30,69 @@ npm run lint      # oxlint による静的解析
 
 ## アーキテクチャ
 
-- **フロントエンド**: Vite + React 18 + TypeScript + Tailwind CSS。単一ページで、スマホ画面風の枠（`max-w-md`）の中に
-  UIをレンダリングする構成。
-- **画面状態管理はすべて [App.tsx](src/App.tsx) に集約**されている。
-  - `activeTab`（`home` / `analytics` / `settings`）でボトムナビゲーションのタブを切り替え。
-  - `isListingMode` が true の間は、`step`（1〜4）で出品ウィザード（撮影 → AI解析結果の補正 → 価格調整 → 最終確認・出品）
-    を進行させる。ウィザードの各ステップのJSXはコンポーネント分割されておらず、App.tsx内に直接書かれている。
+### フロントエンド
+
+- Vite + React 18 + TypeScript + Tailwind CSS + `lucide-react`（アイコン） + `recharts`（グラフ）。
+- **[App.tsx](src/App.tsx) は状態管理と画面組み立てのみを行う薄いシェル**で、各画面のJSXは
+  [src/components/](src/components/) 以下のコンポーネントに分割されている。
+  - `activeTab`（`home` / `analytics` / `settings`）でボトムナビゲーションのタブを切り替え（[BottomNav.tsx](src/components/BottomNav.tsx)）。
+  - `isListingMode` が true の間は、`step`（1〜4）で出品ウィザードを進行させる：
+    [Step1_ImageUpload.tsx](src/components/Step1_ImageUpload.tsx)（撮影）→
+    [Step2_MetadataEdit.tsx](src/components/Step2_MetadataEdit.tsx)（AI解析結果の補正・商品状態評価の表示）→
+    [Step3_Pricing.tsx](src/components/Step3_Pricing.tsx)（価格調整・市場トレンド/競合比較/総合スコアの表示）→
+    [Step4_Preview.tsx](src/components/Step4_Preview.tsx)（最終確認・出品）。
+    ステップ間の移動は [StepperHeader.tsx](src/components/StepperHeader.tsx) のクリックでも可能（解析結果が
+    無いうちはStep2以降へ移動不可）。
+  - ホーム（[HomeDashboard.tsx](src/components/HomeDashboard.tsx)）、分析
+    （[AnalyticsPanel.tsx](src/components/AnalyticsPanel.tsx)、rechartsによる売上推移・カテゴリ別グラフ。
+    現状はダミーデータ）、設定（[SettingsPanel.tsx](src/components/SettingsPanel.tsx)、言語切替スイッチを含む）。
+  - 完了・失敗通知は [Toast.tsx](src/components/Toast.tsx)、出品キャンセル確認は
+    [CancelConfirmDialog.tsx](src/components/CancelConfirmDialog.tsx)。
   - 型定義は [src/types/app.ts](src/types/app.ts)（`TabType`, `RecentListing`, `SalesSummary`）を参照。
+- **多言語対応**: [src/i18n/](src/i18n/) に軽量な自前i18nを実装（react-i18next等は未使用）。
+  `translations.ts` に日本語/英語の辞書、`LanguageContext.tsx` の `useLanguage()`（`language`, `setLanguage`, `t()`）
+  を各コンポーネントから呼び出す。選択言語は`localStorage`に永続化。**eBayへ実際に送信する出品文（title/description）
+  は英語固定のままで、この切替はアプリUIの表示言語のみに影響する。**
 - **型定義**: [src/types/listing.ts](src/types/listing.ts) に `ProductData`（`imageUrl`, `title`, `brand`, `model`,
-  `categoryName`, `condition`, `aspects`, `description`, `pricing`）と `Condition` 型を定義。
+  `categoryName`, `condition`, `aspects`, `description`, `pricing`, `analysis`）と `Condition` 型、および
+  AIマルチエージェント分析結果の型（`ConditionAssessment`, `MarketTrend`, `CompetitorSuggestions`, `ListingAnalysis`）
+  を定義。
 - **APIクライアント層**: [src/services/listingService.ts](src/services/listingService.ts)。
-  - `analyzeImageWithAI` / `estimatePrice` / `publishToEbay` : `http://localhost:3001/api` の実バックエンドを呼び出す
-    実装。`App.tsx` は現在これらを使用している（`npm run server` でバックエンドを起動していないと失敗する）。
+  - `analyzeImageWithAI` / `estimatePrice` / `publishToEbay` : バックエンド（既定は`http://localhost:3001/api`、
+    `VITE_BACKEND_URL`環境変数で変更可）を呼び出す実装。`App.tsx`は現在これらを使用している。
   - `mockAnalyzeImage` / `mockPublishItem` : [src/mock/mockData.ts](src/mock/mockData.ts) のサンプルデータを返す
     モック実装。バックエンドを起動せずにUI単体の動作確認をしたい場合に、`App.tsx` のimportを一時的にこちらへ
     差し替えて使う。
-- **バックエンド**: [server/index.js](server/index.js)（Express、`npm run server` で起動、要 `.env`）。
+
+### バックエンド
+
+- [server/index.js](server/index.js)（Express、`npm run server` で起動、要 `.env`）。
   - `POST /api/analyze-image` : アップロード画像をmulterで受け取り、Gemini（`@google/genai`、既定モデルは
-    `gemini-2.5-flash`）にBase64画像を渡してタイトル・ブランド・型番・状態・説明文をJSONで抽出。
-  - `POST /api/estimate-price` : `{keywords, condition}` を受け取り、eBay OAuth（Client Credentials）でアプリトークンを
-    取得後、Browse APIで類似商品を検索。IQR（四分位範囲）アルゴリズムで外れ値を除去してから
-    `{suggested_price, min_price, max_price}`（snake_case）を算出する。
+    `gemini-3.6-flash`）にBase64画像を渡してタイトル・ブランド・型番・状態・説明文・商品仕様(aspects)をJSONで抽出。
+    基本抽出エージェントと[商品状態エージェント](server/analysisAgents.js)（`runConditionAgent`）を並列実行し、
+    `conditionAssessment`をレスポンスに含める。
+  - `POST /api/estimate-price` : `{keywords, condition, productDraft, conditionAssessment}` を受け取り、eBay OAuth
+    （Client Credentials）でアプリトークンを取得後、Browse APIで類似商品を検索。IQR（四分位範囲）アルゴリズムで
+    外れ値を除去してから価格を算出しつつ、[市場トレンドエージェント](server/analysisAgents.js)（`runMarketTrendAgent`）
+    と[競合比較エージェント](server/analysisAgents.js)（`runCompetitorAgent`）を並列実行し、決定的な計算のみで
+    高速に算出する[総合判定スコア](server/analysisAgents.js)（`scoreListing`、LLM呼び出しではない）とあわせて
+    `{suggested_price, min_price, max_price, market_trend, competitor_suggestions, overall_score, recommendation}`
+    （snake_case）を返す。
   - `POST /api/publish-ebay` : eBay OAuth（Refresh Token Grant）でユーザートークンを取得し、Sell Inventory API を
-    Inventory Item作成 → Offer作成 → Offer公開の3ステップで呼び出して出品を確定する。`EBAY_FULFILLMENT_POLICY_ID` /
-    `EBAY_RETURN_POLICY_ID` が未設定の場合はここでエラーを返す（`npm run setup:policies` の実行を促す）。
+    Inventory Item作成 → Offer作成 → Offer公開の3ステップで呼び出して出品を確定する。Step2で確認・編集された
+    `aspects`配列全体をeBayの商品仕様として送信する。`EBAY_FULFILLMENT_POLICY_ID` / `EBAY_RETURN_POLICY_ID` が
+    未設定の場合はここでエラーを返す（`npm run setup:policies` の実行を促す）。
   - `GET /api/ebay/auth-url` : eBayユーザー同意画面のURLを発行する（初回セットアップ用）。
   - `GET /api/ebay/callback` : 同意後にeBayからリダイレクトされ、認可コードを`refresh_token`に交換して
     `.env`の`EBAY_USER_REFRESH_TOKEN`に自動保存する。
+- **[server/geminiClient.js](server/geminiClient.js)**: Geminiクライアント（`GoogleGenAI`）と`GEMINI_MODEL`定数を
+  集約。`dotenv.config()`を自身でも呼び出しており、importの評価順序に依存しない。
+- **[server/analysisAgents.js](server/analysisAgents.js)**: AIマルチエージェント分析の実体。
+  `runConditionAgent`（画像ベースの商品状態・欠陥検出）、`runMarketTrendAgent` / `runCompetitorAgent`
+  （テキストベースの市場トレンド・競合比較、eBay Browse APIの検索結果を渡す）、`scoreListing`（LLM呼び出しではない
+  決定的な重み付け計算による総合判定スコア）を提供。各エージェントは呼び出し元で`Promise.all`により並列実行され、
+  レスポンス速度を確保している。**市場トレンド分析はeBay Browse APIの「現在アクティブな出品」のみに基づく需要推定
+  であり、実際の売却実績データではない**（Marketplace Insights API等へのアクセス権が無いため）。
 - **[server/ebayAuth.js](server/ebayAuth.js)**: eBay OAuthの共通処理（アプリトークン取得・ユーザートークン取得・
   認可コード交換）を集約。`server/index.js` と `server/setupPolicies.js` の両方から利用する。
 - **[server/envFile.js](server/envFile.js)**: `.env`の特定キーをその場で書き換える`updateEnvValue()`を提供。
@@ -66,8 +103,7 @@ npm run lint      # oxlint による静的解析
 
 ## eBay連携の初回セットアップ手順
 
-`.env`にAPIキーを設定するだけでは出品(`/api/publish-ebay`)は完了しない。以下を一度だけ順番に行う必要がある
-（詳しい背景は本チャットのやり取り、または各ファイルのコメント参照）。
+`.env`にAPIキーを設定するだけでは出品(`/api/publish-ebay`)は完了しない。以下を一度だけ順番に行う必要がある。
 
 1. eBay Developer Portalでキーセット（`EBAY_CLIENT_ID` / `EBAY_CLIENT_SECRET`）とRuName（`EBAY_RU_NAME`）を作成し、
    RuNameの「Your auth accepted URL」に `http://localhost:3001/api/ebay/callback` を設定する
@@ -79,11 +115,24 @@ npm run lint      # oxlint による静的解析
    （出荷元ロケーションを新規作成する場合は`EBAY_LOCATION_ADDRESS_LINE1`等の住所を`.env`に先に設定しておく）。
 5. これで `/api/publish-ebay` が実行可能になる。
 
+## デプロイ
+
+無料サブドメインでのデプロイを想定し、以下の構成・設定ファイルを用意済み（実際のアカウント連携はユーザー操作が必要）。
+
+- **フロントエンド**: Vercel（Viteをゼロコンフィグで自動検出）。GitHubリポジトリと連携してビルドする。
+  環境変数 `VITE_BACKEND_URL` に、デプロイ後のRenderバックエンドURLを設定する
+  （[src/services/listingService.ts](src/services/listingService.ts)がこれを参照、未設定時は`localhost:3001`）。
+- **バックエンド**: Render（Web Service）。[render.yaml](render.yaml) にBlueprint定義済み。
+  `sync: false`の環境変数（`GEMINI_API_KEY`等、[.env.example](.env.example)参照）はRenderダッシュボードで
+  手動入力が必要。`PORT`はRenderが自動注入するため設定不要。
+- デプロイ後、eBay Developer PortalのRuNameの「Your auth accepted URL」を、実際のRender公開URL
+  （例: `https://<render-app>.onrender.com/api/ebay/callback`）に変更する必要がある。
+
 ## 仕様書との差異
 
-[PROJECT_REQUIREMENTS.md](PROJECT_REQUIREMENTS.md) はPython/FastAPIでのバックエンド構築を想定していたが、実装は
-既存のNode.js/Express資産（`express`, `multer`, `openai`, `axios` は元々`package.json`の依存関係として存在していた）
-を活かす方針でNode.js/Expressのまま、エンドポイント名・レスポンスのキー命名規則（snake_case）のみ仕様書に合わせた。
+[PROJECT_REQUIREMENTS.md](PROJECT_REQUIREMENTS.md) はPython/FastAPIでのバックエンド構築、AIエンジンにOpenAI
+GPT-4o Visionを想定していたが、実装はNode.js/Express + Google Gemini（`@google/genai`）で行っている。
+エンドポイント名・レスポンスのキー命名規則（snake_case）は仕様書に合わせた。
 
 ## 未実装・要注意な箇所
 
@@ -92,19 +141,16 @@ npm run lint      # oxlint による静的解析
   `http`で始まらない`imageUrl`をプレースホルダー画像（`https://via.placeholder.com/500`）に強制的に差し替える
   暫定対応をしているため、実際の商品画像は出品されない。実運用には画像を外部ストレージ（Cloudinary/S3等）へ
   アップロードして公開URLを払い出す処理の追加が必要。
-- 以下のファイルは中身が空（0バイト）のプレースホルダーで、ウィザードのロジックは実際にはApp.tsxに直書きされている：
-  `src/components/StepperHeader.tsx`, `src/components/Step1_ImageUpload.tsx`, `src/components/Step2_MetadataEdit.tsx`,
-  `src/components/Step3_Pricing.tsx`, `src/components/Step4_Preview.tsx`。UIをコンポーネント分割する際の受け皿として
-  用意されていると思われる。
-- ルート直下の [ebay_ai_auto_lister_dashboard.tsx](ebay_ai_auto_lister_dashboard.tsx) は `src/` に含まれておらず
-  Viteアプリからは読み込まれない、より作り込まれた単体プロトタイプ（`lucide-react` のアイコンや `recharts` の
-  グラフ、`Product`/`Aspect`/`PricingDataPoint` 型、`PRESET_PRODUCTS` モックデータを使用）。分析タブや商品詳細UIを
-  拡張する際のデザイン参考として存在すると考えられるが、現行アプリには組み込まれていない。
 - `categoryId`は仮の固定値（`112529`）。実運用にはTaxonomy API等での適切なカテゴリ判定が必要。
+- AIマルチエージェント分析（特に商品状態評価）を追加したことで、画像1枚のアップロードあたりのGemini API呼び出し回数が
+  従来の1回から最大4回（基本抽出・商品状態・市場トレンド・競合比較）に増えている。無料枠のレート制限
+  （例: 1日あたりのリクエスト数上限）に達しやすい点に注意。
+- Step3の総合判定スコアはAI解析直後の一時点のスナップショットであり、価格をその後手動調整してもリアルタイムには
+  再計算されない（毎回バックエンド呼び出しが増えるコストとのトレードオフとして意図的に単純化している）。
 - `.env` はGit管理対象外（`.gitignore` に追記済み）。バックエンド側で読み込む変数は
   `PORT` / `GEMINI_API_KEY` / `GEMINI_MODEL` / `EBAY_CLIENT_ID` / `EBAY_CLIENT_SECRET` / `EBAY_RU_NAME` /
   `EBAY_USER_REFRESH_TOKEN` / `EBAY_ENV` / `EBAY_MERCHANT_LOCATION_KEY` / `EBAY_FULFILLMENT_POLICY_ID` /
-  `EBAY_RETURN_POLICY_ID` / `EBAY_PAYMENT_POLICY_ID` / `EBAY_LOCATION_ADDRESS_LINE1` 等の住所4項目。値はユーザー
-  自身がGoogle AI Studio/eBay Developerで取得して設定する必要があり、現状は空のプレースホルダー。
+  `EBAY_RETURN_POLICY_ID` / `EBAY_PAYMENT_POLICY_ID` / `EBAY_LOCATION_ADDRESS_LINE1` 等の住所4項目
+  （[.env.example](.env.example)参照）。値はユーザー自身がGoogle AI Studio/eBay Developerで取得して設定する必要がある。
 - Sandbox環境での出品テストおよび Application Growth Check (AGC) 申請（本番の呼び出し上限引き上げ）は未着手。
   これらはeBay Developer Portal上でユーザー自身が行う必要がある。

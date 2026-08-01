@@ -1,0 +1,36 @@
+# Render Blueprint: バックエンド(Express)デプロイ用設定
+# https://render.com/docs/blueprint-spec
+#
+# 使い方: Renderダッシュボードで「New +」→「Blueprint」からこのリポジトリを選択すると、
+# このファイルを元にWeb Serviceが作成される。sync: false の環境変数はRenderダッシュボード側で
+# 手動入力が必要（.env.example を参照）。
+services:
+  - type: web
+    name: ebay-ai-lister-backend
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node server/index.js
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-3.6-flash
+      - key: EBAY_CLIENT_ID
+        sync: false
+      - key: EBAY_CLIENT_SECRET
+        sync: false
+      - key: EBAY_RU_NAME
+        sync: false
+      - key: EBAY_USER_REFRESH_TOKEN
+        sync: false
+      - key: EBAY_ENV
+        value: SANDBOX
+      - key: EBAY_MERCHANT_LOCATION_KEY
+        value: DEFAULT_LOCATION
+      - key: EBAY_FULFILLMENT_POLICY_ID
+        sync: false
+      - key: EBAY_RETURN_POLICY_ID
+        sync: false
+      - key: EBAY_PAYMENT_POLICY_ID
+        sync: false

@@ -4,7 +4,8 @@
 > 実装はNode.js/Express（[server/index.js](server/index.js)）で行っており、API契約（エンドポイント名・大文字小文字規則）は
 > 本仕様書に合わせているが、バックエンド実行環境はPython/FastAPIではなくNode.js/Expressである。
 > また、AIエンジンは当初のOpenAI GPT-4o Visionから **Google Gemini**（`@google/genai`、既定モデル
-> `gemini-2.5-flash`）に変更している。
+> `gemini-3.6-flash`）に変更している。さらに、当初想定していなかった機能として、UIの大幅な刷新・多言語対応（日本語/
+> 英語）・AIマルチエージェント分析（商品状態・市場トレンド・競合比較・総合判定スコア）を追加実装している。
 > 実装の実態と差異がある箇所は [CLAUDE.md](CLAUDE.md) の「仕様書との差異」を参照。
 
 ## 1. プロジェクト概要
@@ -72,7 +73,9 @@
 
 * **フロントエンド**: Vite, React, TypeScript, Tailwind CSS
 * **バックエンド**: Node.js, Express, Multer, Axios, dotenv, `@google/genai`
-* **AIエンジン**: Google Gemini API (`gemini-2.5-flash` Vision / JSON構造化出力)
+* **AIエンジン**: Google Gemini API (`gemini-3.6-flash` Vision / JSON構造化出力)。単発呼び出しではなく、
+  基本抽出・商品状態・市場トレンド・競合比較の複数エージェントを`Promise.all`で並列実行するマルチエージェント構成
+* **フロントエンドUI**: `lucide-react`（アイコン）、`recharts`（分析グラフ）、自前の軽量i18n（日本語/英語切替）
 * **外部連携**: eBay Developer Program (REST APIs)
   * Authentication: OAuth 2.0 (Client Credentials Grant / Refresh Token Grant)
   * Marketplace: eBay US (`EBAY_US`)
@@ -84,7 +87,7 @@
 ### ① `POST /api/analyze-image` (AI画像解析)
 
 * **入力**: `multipart/form-data` (画像ファイル)
-* **処理**: Gemini Visionを呼び出し、構造化JSONでパース。
+* **処理**: 基本抽出エージェント（Gemini Vision）と商品状態・欠陥検出エージェントを並列実行し、構造化JSONでパース。
 * **出力 JSON**:
 ```json
 {
@@ -92,20 +95,33 @@
   "brand": "Sony",
   "model": "WH-1000XM5",
   "condition": "USED_EXCELLENT",
-  "description": "Full functional Sony WH-1000XM5..."
+  "description": "Full functional Sony WH-1000XM5...",
+  "aspects": { "Color": "Black", "Type": "Over-Ear Headphones" },
+  "conditionAssessment": {
+    "conditionScore": 85,
+    "conditionLabel": "Excellent",
+    "defects": ["minor scuff on left ear cup"],
+    "notes": "..."
+  }
 }
 ```
 
-### ② `POST /api/estimate-price` (市場価格査定)
+### ② `POST /api/estimate-price` (市場価格査定・市場トレンド・競合比較・総合スコア)
 
-* **入力 JSON**: `{"keywords": "Sony WH-1000XM5", "condition": "USED_EXCELLENT"}`
+* **入力 JSON**: `{"keywords": "Sony WH-1000XM5", "condition": "USED_EXCELLENT", "productDraft": {...}, "conditionAssessment": {...}}`
 * **処理**: eBay Browse APIで類似商品を取得し、四分位範囲 (IQR) アルゴリズムで外れ値を除去して適正価格・最安値・最高値を計算。
+  同じ検索結果を使って市場トレンド分析エージェント・競合比較エージェントを並列実行し、さらにLLM呼び出しではない
+  決定的な計算で総合判定スコアを算出する。
 * **出力 JSON**:
 ```json
 {
   "suggested_price": 249.99,
   "min_price": 210.00,
-  "max_price": 285.00
+  "max_price": 285.00,
+  "market_trend": { "demandLevel": "High", "trendNote": "..." },
+  "competitor_suggestions": { "suggestions": ["..."], "competitivePriceNote": "..." },
+  "overall_score": 82,
+  "recommendation": "出品準備は良好です。このまま出品できます。"
 }
 ```
 
@@ -129,13 +145,19 @@
 
 ## 6. 実装状況
 
-* `src/types/listing.ts`: `ProductData`, `Condition`, `ProductAspect`, `PricingInfo` などのTypeScript型定義。
+* `src/types/listing.ts`: `ProductData`, `Condition`, `ProductAspect`, `PricingInfo`,
+  `ConditionAssessment`, `MarketTrend`, `CompetitorSuggestions`, `ListingAnalysis` などのTypeScript型定義。
 * `src/types/app.ts`: `TabType`, `RecentListing`, `SalesSummary` などのアプリ全体状態の型定義。
 * `src/services/listingService.ts`: バックエンド呼び出し層（実API呼び出し + オフライン確認用モック関数の両方を提供）。
-* `src/App.tsx`: モバイルUIレイアウト（ボトムナビゲーション、ダッシュボード、4ステップ出品ウィザード）。
+* `src/components/`: `App.tsx`から分割されたウィザード各ステップ（Step1〜4）、ホーム/分析/設定タブ、
+  ボトムナビゲーション、ステッパー、トースト通知、確認ダイアログの各コンポーネント。
+* `src/i18n/`: 日本語/英語の表示言語切替（軽量自前実装）。
 * `server/index.js`: Express製バックエンド（analyze-image / estimate-price / publish-ebay / ebay OAuth の各エンドポイント）。
+* `server/geminiClient.js`: Geminiクライアントの共通初期化。
+* `server/analysisAgents.js`: AIマルチエージェント分析（商品状態・市場トレンド・競合比較・総合判定スコア）。
 * `server/ebayAuth.js`: eBay OAuthの共通処理（アプリトークン・ユーザートークン取得、認可コード交換）。
 * `server/setupPolicies.js`（`npm run setup:policies`）: Business Policies・出荷元ロケーションの初回セットアップ。
+* `render.yaml` / `.env.example`: 無料サブドメインでのデプロイ用設定（Vercel + Render想定）。
 
 ---
 
@@ -147,7 +169,13 @@
 4. **フロントエンド通信部の書き換え** — 完了（`listingService.ts` の実API関数を `App.tsx` から呼び出す構成に変更）。
 5. **eBayユーザーOAuth同意フロー・Business Policies自動セットアップ** — 完了
    （`GET /api/ebay/auth-url`・`/api/ebay/callback`・`npm run setup:policies`）。
-6. **商品画像の公開URLホスティング** — 未着手。現状は`blob:` URLをプレースホルダー画像に差し替える暫定対応のみ。
-   Cloudinary/S3等への画像アップロード処理の追加が必要。
-7. **Sandbox環境テストおよび Production 移行** — 未着手。ユーザー自身によるeBay Sandboxでのダミー出品テストと、
-   Application Growth Check (AGC) 申請提出が必要。
+6. **UIの大幅刷新・コンポーネント分割** — 完了（`src/components/`への分割、lucide-react/rechartsによるビジュアル刷新）。
+7. **多言語対応（日本語/英語）** — 完了（`src/i18n/`、設定タブから切替）。
+8. **AIマルチエージェント分析（商品状態・市場トレンド・競合比較・総合判定スコア）** — 完了
+   （`server/analysisAgents.js`、Step2/Step3で結果を表示）。
+9. **無料サブドメインでのデプロイ設定** — 完了（`render.yaml`・`.env.example`・`VITE_BACKEND_URL`対応）。
+   実際のVercel/Renderアカウント連携・環境変数入力・eBay RuNameの向き先変更はユーザー自身の作業が必要。
+10. **商品画像の公開URLホスティング** — 未着手。現状は`blob:` URLをプレースホルダー画像に差し替える暫定対応のみ。
+    Cloudinary/S3等への画像アップロード処理の追加が必要。
+11. **Sandbox環境テストおよび Production 移行** — 未着手。ユーザー自身によるeBay Sandboxでのダミー出品テストと、
+    Application Growth Check (AGC) 申請提出が必要。
