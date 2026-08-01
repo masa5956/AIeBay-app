@@ -2,6 +2,7 @@ import { supabase } from './supabaseClient.js';
 
 // 出品成功時にlistingsテーブルへ1件保存する
 export async function saveListing({ sku, listingId, title, price, imageUrl }) {
+  if (!supabase) return; // Supabase未設定時は履歴保存をスキップ（出品自体は成功させる）
   const { error } = await supabase.from('listings').insert({
     sku,
     listing_id: listingId,
@@ -15,6 +16,7 @@ export async function saveListing({ sku, listingId, title, price, imageUrl }) {
 
 // 最近の出品一覧を新しい順に取得する
 export async function getRecentListings(limit = 20) {
+  if (!supabase) return []; // Supabase未設定時は空一覧を返す
   const { data, error } = await supabase
     .from('listings')
     .select('*')
@@ -30,6 +32,9 @@ export async function getRecentListings(limit = 20) {
 // soldItemsCountは現時点では常に0になる（将来的に売却検知の仕組みを追加した際に
 // 意味を持つよう、集計ロジックだけ先に用意している）。
 export async function getSalesSummary() {
+  const empty = { totalRevenue: 0, monthlyRevenue: 0, activeListingsCount: 0, soldItemsCount: 0 };
+  if (!supabase) return empty; // Supabase未設定時はゼロ集計を返す
+
   const { data, error } = await supabase.from('listings').select('price, status, created_at');
   if (error) throw error;
 

@@ -6,9 +6,11 @@ dotenv.config();
 
 // バックエンド専用クライアント。service_roleキーを使うためRLSをバイパスできる。
 // フロントエンドには絶対に渡さないこと。
-export const supabase = createClient(
-  process.env.SUPABASE_URL || '',
-  process.env.SUPABASE_SERVICE_ROLE_KEY || ''
-);
+// 未設定の場合createClient()自体が例外を投げてサーバー起動ごと落ちてしまうため、
+// 未設定時はnullにしてSupabase関連機能だけを無効化する（eBay/AI機能は継続動作させる）。
+export const supabase =
+  process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY
+    ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
+    : null;
 
 export const PRODUCT_IMAGES_BUCKET = 'product-images';

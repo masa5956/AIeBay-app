@@ -29,6 +29,8 @@ const upload = multer({ storage: multer.memoryStorage() });
 // 撮影画像をSupabase Storageにアップロードし、eBayが取得可能な公開URLを発行する。
 // 失敗してもAI解析自体は継続させ、呼び出し元でnullをフォールバック処理させる。
 async function uploadProductImage(buffer, mimetype) {
+  if (!supabase) return null; // Supabase未設定時はアップロードをスキップ
+
   const ext = (mimetype.split('/')[1] || 'jpg').replace('jpeg', 'jpg');
   const filePath = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
 
