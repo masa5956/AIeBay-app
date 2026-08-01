@@ -1,4 +1,9 @@
+import dotenv from 'dotenv';
 import axios from 'axios';
+
+// importの評価順序に関わらず.envを確実に読み込む（index.js側のdotenv.config()より前に
+// このモジュールの初期化コードが実行され得るため）
+dotenv.config();
 
 export const EBAY_BASE_URL = process.env.EBAY_ENV === 'PRODUCTION'
   ? 'https://api.ebay.com'

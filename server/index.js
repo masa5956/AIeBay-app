@@ -2,7 +2,6 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import multer from 'multer';
-import { GoogleGenAI } from '@google/genai';
 import axios from 'axios';
 import {
   EBAY_BASE_URL,
@@ -13,6 +12,8 @@ import {
   exchangeAuthCodeForTokens,
 } from './ebayAuth.js';
 import { updateEnvValue } from './envFile.js';
+import { genAI, GEMINI_MODEL } from './geminiClient.js';
+import { runConditionAgent, runMarketTrendAgent, runCompetitorAgent, scoreListing } from './analysisAgents.js';
 
 dotenv.config();
 
@@ -22,10 +23,6 @@ app.use(express.json());
 
 // 画像アップロードのメモリ保持設定
 const upload = multer({ storage: multer.memoryStorage() });
-
-// Gemini クライアント初期化
-const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
 
 // eBayのcondition値からBrowse APIのconditionIdへのマッピング
 const CONDITION_ID_MAP = {
@@ -61,15 +58,16 @@ app.post('/api/analyze-image', upload.single('image'), async (req, res) => {
     // 画像をBase64変換
     const base64Image = req.file.buffer.toString('base64');
 
-    // Gemini による構造化データ解析呼び出し
-    const response = await genAI.models.generateContent({
-      model: GEMINI_MODEL,
-      contents: [
-        {
-          role: 'user',
-          parts: [
-            {
-              text: `この商品画像を分析し、eBay出品用の情報をJSONフォーマットのみで出力してください（説明や前置きは不要）。
+    // 基本情報抽出エージェントと商品状態エージェントを並列実行（高速レスポンスのため）
+    const [response, conditionAssessment] = await Promise.all([
+      genAI.models.generateContent({
+        model: GEMINI_MODEL,
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              {
+                text: `この商品画像を分析し、eBay出品用の情報をJSONフォーマットのみで出力してください（説明や前置きは不要）。
 実際のeBay出品ページの「Item Specifics（商品仕様）」欄を参考に、写っている商品のカテゴリから推測できる
 具体的な仕様項目をできるだけ多く含めてください。ブランドやモデルが商品自体から読み取れない場合は
 "Unbranded" / "Does not apply" を使ってください。
@@ -98,23 +96,25 @@ app.post('/api/analyze-image', upload.single('image'), async (req, res) => {
 "aspects"は上記をベースに、写っている商品カテゴリに応じて適切な項目を追加・省略してよい
 （例: 家電なら「Power Source」「Connectivity」、衣類なら「Style」「Pattern」など）。
 値が不明な項目はキーごと省略してください。`,
-            },
-            {
-              inlineData: {
-                mimeType: req.file.mimetype,
-                data: base64Image,
               },
-            },
-          ],
+              {
+                inlineData: {
+                  mimeType: req.file.mimetype,
+                  data: base64Image,
+                },
+              },
+            ],
+          },
+        ],
+        config: {
+          responseMimeType: 'application/json',
         },
-      ],
-      config: {
-        responseMimeType: 'application/json',
-      },
-    });
+      }),
+      runConditionAgent(base64Image, req.file.mimetype),
+    ]);
 
     const parsedContent = JSON.parse(response.text || '{}');
-    return res.json(parsedContent);
+    return res.json({ ...parsedContent, conditionAssessment });
   } catch (error) {
     console.error('AI Analysis Error:', error);
     return res.status(500).json({ error: 'AI解析に失敗しました。' });
@@ -126,7 +126,7 @@ app.post('/api/analyze-image', upload.single('image'), async (req, res) => {
 // =================================================================
 app.post('/api/estimate-price', async (req, res) => {
   try {
-    const { keywords, condition } = req.body;
+    const { keywords, condition, productDraft, conditionAssessment } = req.body;
     if (!keywords) {
       return res.status(400).json({ error: '検索キーワードが必要です。' });
     }
@@ -167,7 +167,36 @@ app.post('/api/estimate-price', async (req, res) => {
     const max_price = filteredPrices[filteredPrices.length - 1];
     const suggested_price = filteredPrices[Math.floor(filteredPrices.length / 2)];
 
-    return res.json({ suggested_price, min_price, max_price });
+    // 市場トレンド・競合比較エージェントに渡す簡易出品一覧（タイトル・価格のみ）
+    const simplifiedItems = items
+      .slice(0, 20)
+      .map((item) => ({ title: item.title, price: parseFloat(item.price?.value || '0') }))
+      .filter((item) => item.price > 0);
+    const draft = productDraft || { title: keywords };
+
+    // 市場トレンド分析・競合比較エージェントを並列実行（高速レスポンスのため）
+    const [marketTrend, competitorSuggestions] = await Promise.all([
+      runMarketTrendAgent(keywords, simplifiedItems),
+      runCompetitorAgent(draft, simplifiedItems.slice(0, 5)),
+    ]);
+
+    // 総合判定スコアはLLM呼び出しではなく決定的な計算（高速・低コスト・再現性のため）
+    const { overallScore, recommendation } = scoreListing({
+      conditionResult: conditionAssessment,
+      marketResult: marketTrend,
+      productDraft: draft,
+      pricing: { minPrice: min_price, maxPrice: max_price, userPrice: suggested_price },
+    });
+
+    return res.json({
+      suggested_price,
+      min_price,
+      max_price,
+      market_trend: marketTrend,
+      competitor_suggestions: competitorSuggestions,
+      overall_score: overallScore,
+      recommendation,
+    });
   } catch (error) {
     console.error('eBay Price Search Error:', error?.response?.data || error);
     return res.status(500).json({ error: '価格調査に失敗しました。' });
