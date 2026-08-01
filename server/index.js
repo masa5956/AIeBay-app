@@ -10,10 +10,10 @@ import {
   getAppAccessToken,
   getUserAccessToken,
   exchangeAuthCodeForTokens,
-  getStoredRefreshToken,
 } from './ebayAuth.js';
-import { updateEnvValue } from './envFile.js';
-import { setSetting } from './appSettingsRepository.js';
+import { getEbayConnection, setEbayConnection } from './ebayConnectionsRepository.js';
+import { setupEbayPoliciesForToken } from './setupPolicies.js';
+import { requireAuth } from './authMiddleware.js';
 import { AI_PROVIDER, generateImageJson } from './aiProvider.js';
 import { runConditionAgent, runMarketTrendAgent, runCompetitorAgent, scoreListing } from './analysisAgents.js';
 import { supabase, PRODUCT_IMAGES_BUCKET } from './supabaseClient.js';
@@ -93,7 +93,7 @@ const EBAY_ANALYSIS_PROMPT = `この商品画像を分析し、eBay出品用の�
 （例: 家電なら「Power Source」「Connectivity」、衣類なら「Style」「Pattern」など）。
 値が不明な項目はキーごと省略してください。`;
 
-app.post('/api/analyze-image', upload.single('image'), async (req, res) => {
+app.post('/api/analyze-image', requireAuth, upload.single('image'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: '画像ファイルが添付されていません。' });
@@ -119,7 +119,7 @@ app.post('/api/analyze-image', upload.single('image'), async (req, res) => {
 // =================================================================
 // 2. eBay 類似価格調査エンドポイント (/api/estimate-price)
 // =================================================================
-app.post('/api/estimate-price', async (req, res) => {
+app.post('/api/estimate-price', requireAuth, async (req, res) => {
   try {
     const { keywords, condition, productDraft, conditionAssessment } = req.body;
     if (!keywords) {
@@ -201,19 +201,25 @@ app.post('/api/estimate-price', async (req, res) => {
 // =================================================================
 // 3. eBay 出品実行エンドポイント (/api/publish-ebay)
 // =================================================================
-app.post('/api/publish-ebay', async (req, res) => {
+app.post('/api/publish-ebay', requireAuth, async (req, res) => {
   try {
-    if (!process.env.EBAY_FULFILLMENT_POLICY_ID || !process.env.EBAY_RETURN_POLICY_ID) {
+    const connection = await getEbayConnection(req.userId);
+    if (!connection?.refresh_token) {
       return res.status(400).json({
-        error: 'Business Policies未設定です。先に `npm run setup:policies` を実行してください。',
+        error: 'eBayアカウントが未接続です。設定タブから「eBayでログイン」を行ってください。',
+      });
+    }
+    if (!connection.fulfillment_policy_id || !connection.return_policy_id) {
+      return res.status(400).json({
+        error: 'Business Policiesの準備が完了していません。設定タブから再度「eBayでログイン」を行ってください。',
       });
     }
 
     const productData = req.body;
     const sku = `SKU-${Date.now()}`;
 
-    const userAccessToken = await getUserAccessToken();
-    const merchantLocationKey = process.env.EBAY_MERCHANT_LOCATION_KEY || 'DEFAULT_LOCATION';
+    const userAccessToken = await getUserAccessToken(req.userId);
+    const merchantLocationKey = connection.merchant_location_key || 'DEFAULT_LOCATION';
     const categoryId = productData.categoryId || '112529'; // カテゴリー未指定時のフォールバック（テスト用ID）
 
     // AIが生成したconditionがeBayの許容する4値のいずれとも一致しない場合に備え、
@@ -298,8 +304,8 @@ app.post('/api/publish-ebay', async (req, res) => {
           },
         },
         listingPolicies: {
-          fulfillmentPolicyId: process.env.EBAY_FULFILLMENT_POLICY_ID,
-          returnPolicyId: process.env.EBAY_RETURN_POLICY_ID,
+          fulfillmentPolicyId: connection.fulfillment_policy_id,
+          returnPolicyId: connection.return_policy_id,
           ...(process.env.EBAY_PAYMENT_POLICY_ID
             ? { paymentPolicyId: process.env.EBAY_PAYMENT_POLICY_ID }
             : {}),
@@ -334,6 +340,7 @@ app.post('/api/publish-ebay', async (req, res) => {
     // カテゴリ別集計用に、商品仕様の"Type"（種類）をカテゴリとして流用する
     try {
       await saveListing({
+        userId: req.userId,
         sku,
         listingId,
         title: productData.title,
@@ -360,11 +367,11 @@ app.post('/api/publish-ebay', async (req, res) => {
 // =================================================================
 // 出品履歴・売上サマリー取得エンドポイント (/api/listings)
 // =================================================================
-app.get('/api/listings', async (req, res) => {
+app.get('/api/listings', requireAuth, async (req, res) => {
   try {
     const [recentListingsRaw, salesSummary] = await Promise.all([
-      getRecentListings(20),
-      getSalesSummary(),
+      getRecentListings(req.userId, 20),
+      getSalesSummary(req.userId),
     ]);
 
     const recentListings = recentListingsRaw.map((row) => ({
@@ -387,9 +394,9 @@ app.get('/api/listings', async (req, res) => {
 // 出品詳細取得エンドポイント (/api/listings/:id)
 // 最近の出品一覧から選択した1件の詳細（説明文・商品仕様を含む全項目）を返す
 // =================================================================
-app.get('/api/listings/:id', async (req, res) => {
+app.get('/api/listings/:id', requireAuth, async (req, res) => {
   try {
-    const row = await getListingByListingId(req.params.id);
+    const row = await getListingByListingId(req.userId, req.params.id);
     if (!row) {
       return res.status(404).json({ error: '出品情報が見つかりませんでした。' });
     }
@@ -414,9 +421,9 @@ app.get('/api/listings/:id', async (req, res) => {
 // =================================================================
 // 分析タブ向けエンドポイント (/api/analytics)
 // =================================================================
-app.get('/api/analytics', async (req, res) => {
+app.get('/api/analytics', requireAuth, async (req, res) => {
   try {
-    const analytics = await getAnalytics();
+    const analytics = await getAnalytics(req.userId);
     return res.json(analytics);
   } catch (error) {
     console.error('分析データの取得に失敗しました:', error);
@@ -428,8 +435,10 @@ app.get('/api/analytics', async (req, res) => {
 // 4. eBayユーザー同意フロー (初回のrefresh_token取得用、一度だけ使う)
 // =================================================================
 
-// ① このURLをブラウザで開き、eBayアカウントでログイン・アプリ許可を行う
-app.get('/api/ebay/auth-url', (req, res) => {
+// ① このURLをブラウザで開き、eBayアカウントでログイン・アプリ許可を行う。
+//    どのアプリユーザーが同意したかを後で判別できるよう、userIdをstateパラメータに埋め込む
+//    （eBayが同意後にそのままcallbackへ引き回してくれる標準的なOAuthの仕組み）。
+app.get('/api/ebay/auth-url', requireAuth, (req, res) => {
   if (!process.env.EBAY_CLIENT_ID || !process.env.EBAY_RU_NAME) {
     return res.status(400).json({ error: 'EBAY_CLIENT_ID / EBAY_RU_NAME を.envに設定してください。' });
   }
@@ -439,6 +448,7 @@ app.get('/api/ebay/auth-url', (req, res) => {
     redirect_uri: process.env.EBAY_RU_NAME,
     response_type: 'code',
     scope: USER_SCOPES,
+    state: req.userId,
   }).toString()}`;
 
   return res.json({ url });
@@ -446,20 +456,33 @@ app.get('/api/ebay/auth-url', (req, res) => {
 
 // ② eBayがEBAY_RU_NAMEに設定した「Your auth accepted URL」経由でここにリダイレクトしてくる。
 //    このURLがEBAY_RU_NAMEの「Your auth accepted URL」として登録されている必要がある。
+//    ブラウザの素のリダイレクトでAuthorizationヘッダーは付かないため、認証はstateパラメータ
+//    （①で埋め込んだuserId）で行う。
 app.get('/api/ebay/callback', async (req, res) => {
-  const { code, error } = req.query;
+  const { code, error, state: userId } = req.query;
 
   if (error || !code) {
     return res.status(400).send(`<h1>eBay認可に失敗しました</h1><p>${error || 'codeがありません'}</p>`);
   }
+  if (!userId) {
+    return res.status(400).send('<h1>ユーザー情報が見つかりません</h1><p>アプリの設定タブから改めてログインし直してください。</p>');
+  }
 
   try {
     const tokens = await exchangeAuthCodeForTokens(code);
-    // Supabaseに保存することで、Renderのような永続ディスクの無い環境でも
+
+    // Business Policies・出荷元ロケーションをこのeBayアカウントに対して自動セットアップ
+    // （get-or-createのため、既存アカウントの再ログインでも安全に何度でも実行できる）
+    let policyInfo = {};
+    try {
+      policyInfo = await setupEbayPoliciesForToken(tokens.access_token);
+    } catch (policyErr) {
+      console.error('Business Policy自動セットアップに失敗しました:', policyErr?.response?.data || policyErr);
+    }
+
+    // Supabaseのebay_connectionsに保存することで、Renderのような永続ディスクの無い環境でも
     // 再起動・再デプロイをまたいでログイン状態を維持できる（アプリ内ログインの本体）。
-    await setSetting('ebay_refresh_token', tokens.refresh_token);
-    // ローカル開発時の簡易確認用に.envにも書き込む（Supabase未設定時のフォールバックとして使われる）
-    updateEnvValue('EBAY_USER_REFRESH_TOKEN', tokens.refresh_token);
+    await setEbayConnection(userId, { refreshToken: tokens.refresh_token, ...policyInfo });
 
     return res.send(
       `<h1>eBayとの連携が完了しました</h1>
@@ -472,10 +495,10 @@ app.get('/api/ebay/callback', async (req, res) => {
 });
 
 // ③ 現在のeBay接続状態を確認する（設定タブでの表示用）
-app.get('/api/ebay/status', async (req, res) => {
+app.get('/api/ebay/status', requireAuth, async (req, res) => {
   try {
-    const refreshToken = await getStoredRefreshToken();
-    return res.json({ connected: !!refreshToken });
+    const connection = await getEbayConnection(req.userId);
+    return res.json({ connected: !!connection?.refresh_token });
   } catch (error) {
     console.error('eBay接続状態の確認に失敗しました:', error);
     return res.status(500).json({ error: 'eBay接続状態の確認に失敗しました。' });

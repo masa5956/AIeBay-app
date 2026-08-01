@@ -1,9 +1,10 @@
 import { supabase } from './supabaseClient.js';
 
-// 出品成功時にlistingsテーブルへ1件保存する
-export async function saveListing({ sku, listingId, title, price, imageUrl, category, description, aspects }) {
+// 出品成功時にlistingsテーブルへ1件保存する（ログイン中のユーザーに紐づける）
+export async function saveListing({ userId, sku, listingId, title, price, imageUrl, category, description, aspects }) {
   if (!supabase) return; // Supabase未設定時は履歴保存をスキップ（出品自体は成功させる）
   const { error } = await supabase.from('listings').insert({
+    user_id: userId,
     sku,
     listing_id: listingId,
     title,
@@ -17,32 +18,38 @@ export async function saveListing({ sku, listingId, title, price, imageUrl, cate
   if (error) throw error;
 }
 
-// 出品詳細画面向け: listing_idを指定して1件分の全カラムを取得する
-export async function getListingByListingId(listingId) {
+// 出品詳細画面向け: 自分の出品の中からlisting_idを指定して1件分の全カラムを取得する
+export async function getListingByListingId(userId, listingId) {
   if (!supabase) return null;
-  const { data, error } = await supabase.from('listings').select('*').eq('listing_id', listingId).maybeSingle();
+  const { data, error } = await supabase
+    .from('listings')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('listing_id', listingId)
+    .maybeSingle();
   if (error) throw error;
   return data;
 }
 
-// 最近の出品一覧を新しい順に取得する
-export async function getRecentListings(limit = 20) {
+// 最近の出品一覧を新しい順に取得する（ログイン中のユーザー分のみ）
+export async function getRecentListings(userId, limit = 20) {
   if (!supabase) return []; // Supabase未設定時は空一覧を返す
   const { data, error } = await supabase
     .from('listings')
     .select('*')
+    .eq('user_id', userId)
     .order('created_at', { ascending: false })
     .limit(limit);
   if (error) throw error;
   return data;
 }
 
-// 売上サマリーを集計する。
+// 売上サマリーを集計する（ログイン中のユーザー分のみ）。
 // 注意: 現状「売却済み(SOLD)」へのステータス更新の仕組みが無いため、
 // 全出品はACTIVEのまま記録され続ける。そのためtotalRevenue/monthlyRevenue/
 // soldItemsCountは現時点では常に0になる（将来的に売却検知の仕組みを追加した際に
 // 意味を持つよう、集計ロジックだけ先に用意している）。
-export async function getSalesSummary() {
+export async function getSalesSummary(userId) {
   const empty = {
     totalRevenue: 0,
     monthlyRevenue: 0,
@@ -52,7 +59,7 @@ export async function getSalesSummary() {
   };
   if (!supabase) return empty; // Supabase未設定時はゼロ集計を返す
 
-  const { data, error } = await supabase.from('listings').select('price, status, created_at');
+  const { data, error } = await supabase.from('listings').select('price, status, created_at').eq('user_id', userId);
   if (error) throw error;
 
   const now = new Date();
@@ -90,14 +97,17 @@ export async function getSalesSummary() {
   return { totalRevenue, monthlyRevenue, monthlyRevenueChangePercent, activeListingsCount, soldItemsCount };
 }
 
-// 分析タブ向け: 月別出品額推移(直近6ヶ月)・カテゴリ別出品額構成を集計する。
+// 分析タブ向け: 月別出品額推移(直近6ヶ月)・カテゴリ別出品額構成を集計する（ログイン中のユーザー分のみ）。
 // 注意: 売却済みかどうかを問わず「出品された時点の金額」を集計している
 // （売却検知の仕組みが無いため、実際の売上ではなく出品アクティビティの実データ）。
-export async function getAnalytics() {
+export async function getAnalytics(userId) {
   const empty = { monthlyTrend: [], categoryBreakdown: [] };
   if (!supabase) return empty;
 
-  const { data, error } = await supabase.from('listings').select('price, category, created_at');
+  const { data, error } = await supabase
+    .from('listings')
+    .select('price, category, created_at')
+    .eq('user_id', userId);
   if (error) throw error;
 
   // 直近6ヶ月分の枠を先に用意しておく（出品が無い月も0件で表示するため）

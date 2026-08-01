@@ -10,7 +10,7 @@ const MARKETPLACE_ID = 'EBAY_US';
 // Business Policy機能(Selling Policy Management)へのオプトイン。
 // 新規作成したSandboxテストユーザーはデフォルトで無効になっており、
 // 有効化しないままポリシー作成APIを呼ぶと「User is not eligible for Business Policy」エラーになる。
-async function ensureBusinessPolicyOptIn(token) {
+export async function ensureBusinessPolicyOptIn(token) {
   try {
     await axios.post(
       `${EBAY_BASE_URL}/sell/account/v1/program/opt_in`,
@@ -30,7 +30,7 @@ async function ensureBusinessPolicyOptIn(token) {
 }
 
 // 配送ポリシーを取得、無ければ最低限の内容で新規作成する
-async function ensureFulfillmentPolicy(token) {
+export async function ensureFulfillmentPolicy(token) {
   const listRes = await axios.get(`${EBAY_BASE_URL}/sell/account/v1/fulfillment_policy`, {
     headers: { Authorization: `Bearer ${token}` },
     params: { marketplace_id: MARKETPLACE_ID },
@@ -72,7 +72,7 @@ async function ensureFulfillmentPolicy(token) {
 }
 
 // 返品ポリシーを取得、無ければ最低限の内容で新規作成する
-async function ensureReturnPolicy(token) {
+export async function ensureReturnPolicy(token) {
   const listRes = await axios.get(`${EBAY_BASE_URL}/sell/account/v1/return_policy`, {
     headers: { Authorization: `Bearer ${token}` },
     params: { marketplace_id: MARKETPLACE_ID },
@@ -101,8 +101,10 @@ async function ensureReturnPolicy(token) {
   return createRes.data.returnPolicyId;
 }
 
-// 出荷元ロケーションを取得、無ければ.envの住所情報から新規作成する
-async function ensureMerchantLocation(token) {
+// 出荷元ロケーションを取得、無ければ.envの住所情報から新規作成する。
+// 住所自体はアプリ全体で共有の出荷元（EBAY_LOCATION_*）を使う前提の簡易実装
+// （ユーザーごとに異なる出荷元住所を持たせるにはUIでの住所入力機能の追加が別途必要）。
+export async function ensureMerchantLocation(token) {
   const merchantLocationKey = process.env.EBAY_MERCHANT_LOCATION_KEY || 'DEFAULT_LOCATION';
 
   const exists = await axios
@@ -117,7 +119,7 @@ async function ensureMerchantLocation(token) {
 
   if (exists) {
     console.log(`既存の出荷元ロケーションを使用します: ${merchantLocationKey}`);
-    return;
+    return merchantLocationKey;
   }
 
   const {
@@ -135,7 +137,7 @@ async function ensureMerchantLocation(token) {
       'EBAY_LOCATION_POSTAL_CODE / EBAY_LOCATION_COUNTRY を.envに設定して再実行するか、' +
       'eBay Seller Hubで手動作成してください。'
     );
-    return;
+    return merchantLocationKey;
   }
 
   await axios.post(
@@ -158,17 +160,26 @@ async function ensureMerchantLocation(token) {
   );
 
   console.log(`出荷元ロケーションを新規作成しました: ${merchantLocationKey}`);
+  return merchantLocationKey;
 }
 
+// 指定したアクセストークンのeBayアカウントに対し、Business Policies・出荷元ロケーションを
+// 一括セットアップする（get-or-createなので何度呼んでも安全）。
+// アプリ内「eBayでログイン」の直後に自動実行される他、npm run setup:policiesからも呼ばれる。
+export async function setupEbayPoliciesForToken(token) {
+  await ensureBusinessPolicyOptIn(token);
+  const fulfillmentPolicyId = await ensureFulfillmentPolicy(token);
+  const returnPolicyId = await ensureReturnPolicy(token);
+  const merchantLocationKey = await ensureMerchantLocation(token);
+  return { fulfillmentPolicyId, returnPolicyId, merchantLocationKey };
+}
+
+// npm run setup:policies から直接実行された場合のみ動作する
+// （.envのEBAY_USER_REFRESH_TOKENを使ったローカル動作確認・旧来の手動セットアップ用）
 async function main() {
   console.log('eBay Business Policies / 出荷元ロケーションのセットアップを開始します...');
   const token = await getUserAccessToken();
-
-  await ensureBusinessPolicyOptIn(token);
-
-  const fulfillmentPolicyId = await ensureFulfillmentPolicy(token);
-  const returnPolicyId = await ensureReturnPolicy(token);
-  await ensureMerchantLocation(token);
+  const { fulfillmentPolicyId, returnPolicyId } = await setupEbayPoliciesForToken(token);
 
   updateEnvValue('EBAY_FULFILLMENT_POLICY_ID', fulfillmentPolicyId);
   updateEnvValue('EBAY_RETURN_POLICY_ID', returnPolicyId);
@@ -176,7 +187,10 @@ async function main() {
   console.log('.env に EBAY_FULFILLMENT_POLICY_ID / EBAY_RETURN_POLICY_ID を保存しました。');
 }
 
-main().catch((error) => {
-  console.error('セットアップに失敗しました:', error?.response?.data || error);
-  process.exit(1);
-});
+const isDirectRun = process.argv[1] && import.meta.url === `file://${process.argv[1].replace(/\\/g, '/')}`;
+if (isDirectRun) {
+  main().catch((error) => {
+    console.error('セットアップに失敗しました:', error?.response?.data || error);
+    process.exit(1);
+  });
+}

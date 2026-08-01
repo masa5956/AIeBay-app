@@ -1,20 +1,10 @@
 import dotenv from 'dotenv';
 import axios from 'axios';
-import { getSetting } from './appSettingsRepository.js';
+import { getEbayRefreshToken } from './ebayConnectionsRepository.js';
 
 // importの評価順序に関わらず.envを確実に読み込む（index.js側のdotenv.config()より前に
 // このモジュールの初期化コードが実行され得るため）
 dotenv.config();
-
-const REFRESH_TOKEN_KEY = 'ebay_refresh_token';
-
-// 現在有効なrefresh_tokenを取得する。Supabaseに保存済みならそれを優先し
-// （アプリ内ログインで取得した最新のトークン）、無ければ.envのEBAY_USER_REFRESH_TOKENに
-// フォールバックする（ローカル開発時の簡易設定用）。
-export async function getStoredRefreshToken() {
-  const stored = await getSetting(REFRESH_TOKEN_KEY);
-  return stored || process.env.EBAY_USER_REFRESH_TOKEN || null;
-}
 
 export const EBAY_BASE_URL = process.env.EBAY_ENV === 'PRODUCTION'
   ? 'https://api.ebay.com'
@@ -58,11 +48,12 @@ export async function getAppAccessToken() {
 // =================================================================
 // eBay User Access Token の取得 (Refresh Token Grant)
 // Sell Inventory/Offer/Account APIなど、ユーザー認可が必要なAPI呼び出しに使用する。
-// 事前に /api/ebay/auth-url → /api/ebay/callback の同意フローでEBAY_USER_REFRESH_TOKENを
-// 取得しておく必要がある（有効期限は通常18か月）。
+// userIdを渡した場合はSupabaseのebay_connectionsからそのユーザーが接続したeBayアカウントの
+// refresh_tokenを取得する（アプリ内ログインの本体）。userId省略時は.envのEBAY_USER_REFRESH_TOKEN
+// を使う（`npm run setup:policies`のローカル手動実行専用のフォールバック）。
 // =================================================================
-export async function getUserAccessToken() {
-  const refreshToken = await getStoredRefreshToken();
+export async function getUserAccessToken(userId) {
+  const refreshToken = userId ? await getEbayRefreshToken(userId) : process.env.EBAY_USER_REFRESH_TOKEN;
   if (!refreshToken) {
     throw new Error(
       'eBayアカウントが未接続です。設定タブから「eBayでログイン」を行ってください。'

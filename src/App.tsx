@@ -1,7 +1,10 @@
 import React, { useEffect, useState } from 'react';
+import type { Session } from '@supabase/supabase-js';
 import type { TabType, RecentListing, SalesSummary } from './types/app';
 import type { ProductData } from './types/listing';
 import { analyzeImageWithAI, getListings, mockAnalyzeImage, publishToEbay } from './services/listingService';
+import { supabase } from './services/supabaseClient';
+import AuthScreen from './components/AuthScreen';
 import BottomNav from './components/BottomNav';
 import Toast, { type Feedback } from './components/Toast';
 import CancelConfirmDialog from './components/CancelConfirmDialog';
@@ -16,6 +19,21 @@ import Step4_Preview from './components/Step4_Preview';
 import ListingDetailModal from './components/ListingDetailModal';
 
 export default function App() {
+  // アプリ自体のログインセッション（Supabase Auth）。未ログイン時はAuthScreenを表示する。
+  const [session, setSession] = useState<Session | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session);
+      setAuthLoading(false);
+    });
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession);
+    });
+    return () => listener.subscription.unsubscribe();
+  }, []);
+
   // ナビゲーション状態
   const [activeTab, setActiveTab] = useState<TabType>('home');
   // 出品フロー実行中かどうか
@@ -69,10 +87,10 @@ export default function App() {
     }
   };
 
-  // マウント時に一度、最近の出品・売上サマリーを取得
+  // ログイン確定後に一度、最近の出品・売上サマリーを取得
   useEffect(() => {
-    refreshListings();
-  }, []);
+    if (session) refreshListings();
+  }, [session]);
 
   // 画像アップロード処理
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -136,6 +154,18 @@ export default function App() {
     setStep(1);
     setProductData(null);
   };
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+        <div className="animate-spin rounded-full h-10 w-10 border-4 border-blue-600 border-t-transparent"></div>
+      </div>
+    );
+  }
+
+  if (!session) {
+    return <AuthScreen />;
+  }
 
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col items-center">
@@ -212,7 +242,11 @@ export default function App() {
             )}
             {activeTab === 'analytics' && <AnalyticsPanel />}
             {activeTab === 'settings' && (
-              <SettingsPanel useMockAnalysis={useMockAnalysis} onToggleMockAnalysis={handleToggleMockAnalysis} />
+              <SettingsPanel
+                useMockAnalysis={useMockAnalysis}
+                onToggleMockAnalysis={handleToggleMockAnalysis}
+                onLogout={() => supabase.auth.signOut()}
+              />
             )}
           </main>
         )}

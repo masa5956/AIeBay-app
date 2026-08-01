@@ -1,8 +1,17 @@
 import type { CompetitorSuggestions, ConditionAssessment, MarketTrend, ProductAspect, ProductData } from '../types/listing';
 import type { AnalyticsData, ListingDetail, RecentListing, SalesSummary } from '../types/app';
 import { mockProductData } from '../mock/mockData';
+import { supabase } from './supabaseClient';
 
 const BACKEND_URL = `${import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001'}/api`;
+
+// ログイン中ユーザーのSupabaseセッショントークンをAuthorizationヘッダーとして付与する。
+// バックエンドはこのトークンを検証してuser_idを特定し、データをユーザーごとに分離する。
+async function authHeaders(): Promise<Record<string, string>> {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 // 開発用モック: バックエンドを起動せずに画像解析結果を模擬する
 export const mockAnalyzeImage = async (imageFile: File): Promise<ProductData> => {
@@ -29,6 +38,7 @@ export const analyzeImageWithAI = async (imageFile: File): Promise<ProductData> 
 
   const response = await fetch(`${BACKEND_URL}/analyze-image`, {
     method: 'POST',
+    headers: await authHeaders(),
     body: formData,
   });
 
@@ -106,7 +116,7 @@ export const estimatePrice = async (
   try {
     const response = await fetch(`${BACKEND_URL}/estimate-price`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
       body: JSON.stringify({ keywords, condition, productDraft, conditionAssessment }),
     });
     if (!response.ok) return { suggestedPrice: 0, minPrice: 0, maxPrice: 0 };
@@ -130,7 +140,7 @@ export const estimatePrice = async (
 export const publishToEbay = async (productData: ProductData): Promise<{ success: boolean; listingId: string }> => {
   const response = await fetch(`${BACKEND_URL}/publish-ebay`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
     body: JSON.stringify(productData),
   });
 
@@ -143,7 +153,7 @@ export const publishToEbay = async (productData: ProductData): Promise<{ success
 
 // 4. 最近の出品一覧・売上サマリーをバックエンド(DB)から取得する
 export const getListings = async (): Promise<{ recentListings: RecentListing[]; salesSummary: SalesSummary }> => {
-  const response = await fetch(`${BACKEND_URL}/listings`);
+  const response = await fetch(`${BACKEND_URL}/listings`, { headers: await authHeaders() });
   if (!response.ok) {
     throw new Error('出品履歴の取得に失敗しました');
   }
@@ -152,7 +162,7 @@ export const getListings = async (): Promise<{ recentListings: RecentListing[]; 
 
 // 5. 分析タブ向けの月別出品額推移・カテゴリ別出品額構成をバックエンド(DB)から取得する
 export const getAnalytics = async (): Promise<AnalyticsData> => {
-  const response = await fetch(`${BACKEND_URL}/analytics`);
+  const response = await fetch(`${BACKEND_URL}/analytics`, { headers: await authHeaders() });
   if (!response.ok) {
     throw new Error('分析データの取得に失敗しました');
   }
@@ -161,7 +171,7 @@ export const getAnalytics = async (): Promise<AnalyticsData> => {
 
 // 6. 最近の出品一覧から選択した1件の詳細（説明文・商品仕様を含む）を取得する
 export const getListingDetail = async (id: string): Promise<ListingDetail> => {
-  const response = await fetch(`${BACKEND_URL}/listings/${encodeURIComponent(id)}`);
+  const response = await fetch(`${BACKEND_URL}/listings/${encodeURIComponent(id)}`, { headers: await authHeaders() });
   if (!response.ok) {
     throw new Error('出品詳細の取得に失敗しました');
   }
@@ -170,7 +180,7 @@ export const getListingDetail = async (id: string): Promise<ListingDetail> => {
 
 // 7. eBayユーザー同意画面のURLを取得する（設定タブの「eBayでログイン」ボタンから使用）
 export const getEbayAuthUrl = async (): Promise<string> => {
-  const response = await fetch(`${BACKEND_URL}/ebay/auth-url`);
+  const response = await fetch(`${BACKEND_URL}/ebay/auth-url`, { headers: await authHeaders() });
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
     throw new Error(data.error || 'eBay認証URLの取得に失敗しました');
@@ -181,7 +191,7 @@ export const getEbayAuthUrl = async (): Promise<string> => {
 
 // 8. eBayアカウントが接続済みかどうかを確認する
 export const getEbayStatus = async (): Promise<{ connected: boolean }> => {
-  const response = await fetch(`${BACKEND_URL}/ebay/status`);
+  const response = await fetch(`${BACKEND_URL}/ebay/status`, { headers: await authHeaders() });
   if (!response.ok) {
     return { connected: false };
   }

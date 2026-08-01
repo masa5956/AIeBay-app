@@ -4,10 +4,11 @@ import { getEbayAuthUrl, getEbayStatus } from '../services/listingService';
 interface SettingsPanelProps {
   useMockAnalysis: boolean;
   onToggleMockAnalysis: (value: boolean) => void;
+  onLogout: () => void;
 }
 
 // 設定タブ: 連携状態の表示 + 開発者向けモック切替
-export default function SettingsPanel({ useMockAnalysis, onToggleMockAnalysis }: SettingsPanelProps) {
+export default function SettingsPanel({ useMockAnalysis, onToggleMockAnalysis, onLogout }: SettingsPanelProps) {
   const [ebayConnected, setEbayConnected] = useState<boolean | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
   const [connectError, setConnectError] = useState('');
@@ -98,6 +99,13 @@ export default function SettingsPanel({ useMockAnalysis, onToggleMockAnalysis }:
           ONにするとAI(Gemini/Groq)を呼び出さずサンプルデータで画面確認できます。eBayへの出品自体は実際のAPIを使用します。
         </p>
       </div>
+
+      <button
+        onClick={onLogout}
+        className="w-full border border-red-200 text-red-600 font-bold py-2.5 rounded-lg text-xs hover:bg-red-50 transition"
+      >
+        ログアウト
+      </button>
     </div>
   );
 }
