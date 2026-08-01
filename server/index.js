@@ -233,6 +233,8 @@ app.post('/api/publish-ebay', async (req, res) => {
     }
     if (!aspects.Brand) aspects.Brand = [productData.brand || 'Unbranded'];
     if (!aspects.Model) aspects.Model = [productData.model || 'N/A'];
+    // Colorは多くのカテゴリで必須項目のため、AIが検出できなかった場合の既定値を用意する
+    if (!aspects.Color) aspects.Color = ['Does not apply'];
 
     // Step 1: Inventory Item の作成 (PUT /sell/inventory/v1/inventory_item/{sku})
     await axios.put(

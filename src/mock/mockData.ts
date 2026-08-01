@@ -10,6 +10,7 @@ export const mockProductData: Omit<ProductData, 'imageUrl'> = {
   aspects: [
     { key: 'Brand', value: 'Sony' },
     { key: 'Model', value: 'WH-1000XM5' },
+    { key: 'Color', value: 'Black' },
   ],
   description: 'AIが解析した商品説明文（モック）です。ノイズキャンセリング機能付きワイヤレスヘッドホン。',
   pricing: {
