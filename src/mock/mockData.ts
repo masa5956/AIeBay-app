@@ -10,7 +10,16 @@ export const mockProductData: Omit<ProductData, 'imageUrl'> = {
   aspects: [
     { key: 'Brand', value: 'Sony' },
     { key: 'Model', value: 'WH-1000XM5' },
+    { key: 'Type', value: 'Over-Ear Headphones' },
     { key: 'Color', value: 'Black' },
+    { key: 'Material', value: 'Plastic, Metal' },
+    { key: 'Size', value: 'Standard' },
+    { key: 'Department', value: 'Unisex Adults' },
+    { key: 'Country/Region of Manufacture', value: 'China' },
+    { key: 'MPN', value: 'WH-1000XM5' },
+    { key: 'UPC', value: 'Does not apply' },
+    { key: 'Features', value: 'Noise Cancelling, Bluetooth, Built-In Microphone' },
+    { key: 'Included Items', value: 'Headphones, Charging Cable, Carrying Case' },
   ],
   description: 'AIが解析した商品説明文（モック）です。ノイズキャンセリング機能付きワイヤレスヘッドホン。',
   pricing: {
