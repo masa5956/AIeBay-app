@@ -3,7 +3,7 @@ import type { Session } from '@supabase/supabase-js';
 import type { TabType, RecentListing, SalesSummary } from './types/app';
 import type { ProductData } from './types/listing';
 import { analyzeImageWithAI, getListings, mockAnalyzeImage, publishToEbay } from './services/listingService';
-import { supabase } from './services/supabaseClient';
+import { supabase, isSupabaseConfigured } from './services/supabaseClient';
 import AuthScreen from './components/AuthScreen';
 import BottomNav from './components/BottomNav';
 import Toast, { type Feedback } from './components/Toast';
@@ -154,6 +154,22 @@ export default function App() {
     setStep(1);
     setProductData(null);
   };
+
+// VITE_SUPABASE_URL/VITE_SUPABASE_ANON_KEYが未設定のまま本番ビルドされた場合、
+  // 真っ白な画面のまま原因が分からなくなるのを防ぐため、明確な案内を表示する。
+  if (!isSupabaseConfigured) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-6">
+        <div className="bg-white rounded-xl p-5 max-w-sm text-center space-y-2">
+          <p className="text-sm font-bold text-red-600">アプリの設定が未完了です</p>
+          <p className="text-xs text-slate-500">
+            環境変数 VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY が設定されていません。デプロイ先（Vercel）の
+            環境変数を設定した上で、再デプロイしてください。
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   if (authLoading) {
     return (
