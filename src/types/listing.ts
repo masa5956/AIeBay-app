@@ -16,6 +16,35 @@ export interface PricingInfo {
   acceptOffer: boolean;
 }
 
+// 商品状態・欠陥検出エージェントの結果
+export interface ConditionAssessment {
+  conditionScore: number;
+  conditionLabel: string;
+  defects: string[];
+  notes: string;
+}
+
+// 市場トレンド・需要分析エージェントの結果
+export interface MarketTrend {
+  demandLevel: 'High' | 'Medium' | 'Low';
+  trendNote: string;
+}
+
+// 競合比較エージェントの結果
+export interface CompetitorSuggestions {
+  suggestions: string[];
+  competitivePriceNote: string;
+}
+
+// AIマルチエージェント分析の結果一式（出品前の参考情報、最終判断は人間が行う）
+export interface ListingAnalysis {
+  conditionAssessment?: ConditionAssessment;
+  marketTrend?: MarketTrend;
+  competitorSuggestions?: CompetitorSuggestions;
+  overallScore?: number;
+  recommendation?: string;
+}
+
 // 出品ウィザードで扱う商品データ本体
 export interface ProductData {
   imageUrl?: string;
@@ -27,4 +56,5 @@ export interface ProductData {
   aspects: ProductAspect[];
   description: string;
   pricing: PricingInfo;
+  analysis?: ListingAnalysis;
 }

@@ -1,0 +1,102 @@
+import { Camera } from 'lucide-react';
+import type { RecentListing, SalesSummary } from '../types/app';
+import { useLanguage } from '../i18n/LanguageContext';
+
+interface HomeDashboardProps {
+  salesSummary: SalesSummary;
+  recentListings: RecentListing[];
+  onStartListing: () => void;
+}
+
+// ホームタブ: 売上ダッシュボード + 最近の出品一覧
+export default function HomeDashboard({ salesSummary, recentListings, onStartListing }: HomeDashboardProps) {
+  const { t } = useLanguage();
+
+  return (
+    <div className="space-y-6">
+      {/* アプリヘッダー */}
+      <div className="flex justify-between items-center pt-2">
+        <div>
+          <p className="text-xs font-semibold text-slate-400">{t('welcomeBack')}</p>
+          <h1 className="text-lg font-black text-slate-800">{t('appName')}</h1>
+        </div>
+        <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center text-white font-bold text-xs shadow-md shadow-blue-500/30">
+          US
+        </div>
+      </div>
+
+      {/* 売上ダッシュボード */}
+      <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 rounded-2xl p-5 text-white shadow-xl space-y-4">
+        <div className="flex justify-between items-start">
+          <div>
+            <p className="text-xs text-slate-400 font-medium">{t('monthlyRevenue')}</p>
+            <h2 className="text-3xl font-black mt-1 tracking-tight">
+              ${salesSummary.monthlyRevenue.toLocaleString()}
+            </h2>
+          </div>
+          <span className="bg-emerald-500/20 text-emerald-400 text-[10px] font-bold px-2 py-1 rounded-full border border-emerald-500/30">
+            +14.2%
+          </span>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-700/60 text-xs">
+          <div>
+            <p className="text-slate-400 text-[10px]">{t('activeListings')}</p>
+            <p className="font-bold text-slate-100 mt-0.5">
+              {salesSummary.activeListingsCount} {t('unitCount')}
+            </p>
+          </div>
+          <div>
+            <p className="text-slate-400 text-[10px]">{t('totalSold')}</p>
+            <p className="font-bold text-slate-100 mt-0.5">
+              {salesSummary.soldItemsCount} {t('unitCount')}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* 出品メインアクションボタン */}
+      <button
+        onClick={onStartListing}
+        className="w-full bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-700 hover:to-blue-600 active:scale-[0.98] text-white font-extrabold py-4 rounded-xl shadow-lg shadow-blue-500/30 flex items-center justify-center gap-2 transition"
+      >
+        <Camera size={20} />
+        <span>{t('createListingButton')}</span>
+      </button>
+
+      {/* 最近の出品リスト */}
+      <div className="space-y-3">
+        <div className="flex justify-between items-center">
+          <h3 className="text-sm font-bold text-slate-800">{t('recentListings')}</h3>
+          <span className="text-xs text-blue-600 font-semibold cursor-pointer hover:underline">
+            {t('viewAll')}
+          </span>
+        </div>
+
+        <div className="space-y-2">
+          {recentListings.map((item) => (
+            <div
+              key={item.id}
+              className="bg-white border border-slate-200 rounded-xl p-3 flex justify-between items-center shadow-sm hover:border-blue-200 hover:shadow-md transition"
+            >
+              <div className="space-y-1 max-w-[200px]">
+                <p className="text-xs font-bold text-slate-800 truncate">{item.title}</p>
+                <p className="text-[10px] text-slate-400">{item.date}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-xs font-black text-slate-900">${item.price}</p>
+                <span
+                  className={`inline-block text-[9px] font-bold px-2 py-0.5 rounded-full ${
+                    item.status === 'ACTIVE' ? 'bg-blue-50 text-blue-600' : 'bg-emerald-50 text-emerald-600'
+                  }`}
+                >
+                  {item.status}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}

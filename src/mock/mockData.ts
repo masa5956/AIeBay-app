@@ -19,4 +19,22 @@ export const mockProductData: Omit<ProductData, 'imageUrl'> = {
     userPrice: 249.99,
     acceptOffer: true,
   },
+  analysis: {
+    conditionAssessment: {
+      conditionScore: 88,
+      conditionLabel: 'Excellent',
+      defects: ['イヤーパッドに軽い使用感'],
+      notes: '目立った傷はなく、全体的に良好な状態です（モック）。',
+    },
+    marketTrend: {
+      demandLevel: 'High',
+      trendNote: '類似出品が少なく、価格帯も安定しているため需要が高い状況です（モック）。',
+    },
+    competitorSuggestions: {
+      suggestions: ['タイトルに「Noise Cancelling」を追加すると露出が上がります（モック）。'],
+      competitivePriceNote: '競合と比べて妥当な価格帯です（モック）。',
+    },
+    overallScore: 82,
+    recommendation: '出品準備は良好です。このまま出品できます（モック）。',
+  },
 };
