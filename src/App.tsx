@@ -13,6 +13,7 @@ import Step1_ImageUpload from './components/Step1_ImageUpload';
 import Step2_MetadataEdit from './components/Step2_MetadataEdit';
 import Step3_Pricing from './components/Step3_Pricing';
 import Step4_Preview from './components/Step4_Preview';
+import ListingDetailModal from './components/ListingDetailModal';
 
 export default function App() {
   // ナビゲーション状態
@@ -29,6 +30,8 @@ export default function App() {
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   // 出品作業キャンセルの確認ダイアログ表示中かどうか
   const [isCancelConfirmOpen, setIsCancelConfirmOpen] = useState<boolean>(false);
+  // 最近の出品からタップして詳細モーダルを開いている出品のID（未選択時はnull）
+  const [selectedListingId, setSelectedListingId] = useState<string | null>(null);
   // 開発者向け: ONの間はAI解析をモックデータで代用しGemini/Groqのクォータを消費しない（出品自体は実APIを使用）
   const [useMockAnalysis, setUseMockAnalysis] = useState<boolean>(
     () => localStorage.getItem('ebay-ai-lister-use-mock-analysis') === 'true'
@@ -144,6 +147,9 @@ export default function App() {
           onDismiss={() => setIsCancelConfirmOpen(false)}
           onConfirm={cancelListing}
         />
+        {selectedListingId && (
+          <ListingDetailModal listingId={selectedListingId} onClose={() => setSelectedListingId(null)} />
+        )}
 
         {/* ================= 出品フローモーダル表示時 ================= */}
         {isListingMode ? (
@@ -201,6 +207,7 @@ export default function App() {
                 salesSummary={salesSummary}
                 recentListings={recentListings}
                 onStartListing={() => setIsListingMode(true)}
+                onSelectListing={setSelectedListingId}
               />
             )}
             {activeTab === 'analytics' && <AnalyticsPanel />}

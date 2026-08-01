@@ -1,9 +1,20 @@
 import dotenv from 'dotenv';
 import axios from 'axios';
+import { getSetting } from './appSettingsRepository.js';
 
 // importの評価順序に関わらず.envを確実に読み込む（index.js側のdotenv.config()より前に
 // このモジュールの初期化コードが実行され得るため）
 dotenv.config();
+
+const REFRESH_TOKEN_KEY = 'ebay_refresh_token';
+
+// 現在有効なrefresh_tokenを取得する。Supabaseに保存済みならそれを優先し
+// （アプリ内ログインで取得した最新のトークン）、無ければ.envのEBAY_USER_REFRESH_TOKENに
+// フォールバックする（ローカル開発時の簡易設定用）。
+export async function getStoredRefreshToken() {
+  const stored = await getSetting(REFRESH_TOKEN_KEY);
+  return stored || process.env.EBAY_USER_REFRESH_TOKEN || null;
+}
 
 export const EBAY_BASE_URL = process.env.EBAY_ENV === 'PRODUCTION'
   ? 'https://api.ebay.com'
@@ -51,9 +62,10 @@ export async function getAppAccessToken() {
 // 取得しておく必要がある（有効期限は通常18か月）。
 // =================================================================
 export async function getUserAccessToken() {
-  if (!process.env.EBAY_USER_REFRESH_TOKEN) {
+  const refreshToken = await getStoredRefreshToken();
+  if (!refreshToken) {
     throw new Error(
-      'EBAY_USER_REFRESH_TOKENが未設定です。先に /api/ebay/auth-url からeBayユーザー同意フローを完了してください。'
+      'eBayアカウントが未接続です。設定タブから「eBayでログイン」を行ってください。'
     );
   }
 
@@ -61,7 +73,7 @@ export async function getUserAccessToken() {
     `${EBAY_BASE_URL}/identity/v1/oauth2/token`,
     new URLSearchParams({
       grant_type: 'refresh_token',
-      refresh_token: process.env.EBAY_USER_REFRESH_TOKEN,
+      refresh_token: refreshToken,
       scope: USER_SCOPES,
     }).toString(),
     {

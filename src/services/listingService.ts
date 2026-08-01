@@ -1,5 +1,5 @@
 import type { CompetitorSuggestions, ConditionAssessment, MarketTrend, ProductAspect, ProductData } from '../types/listing';
-import type { AnalyticsData, RecentListing, SalesSummary } from '../types/app';
+import type { AnalyticsData, ListingDetail, RecentListing, SalesSummary } from '../types/app';
 import { mockProductData } from '../mock/mockData';
 
 const BACKEND_URL = `${import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001'}/api`;
@@ -155,6 +155,35 @@ export const getAnalytics = async (): Promise<AnalyticsData> => {
   const response = await fetch(`${BACKEND_URL}/analytics`);
   if (!response.ok) {
     throw new Error('分析データの取得に失敗しました');
+  }
+  return await response.json();
+};
+
+// 6. 最近の出品一覧から選択した1件の詳細（説明文・商品仕様を含む）を取得する
+export const getListingDetail = async (id: string): Promise<ListingDetail> => {
+  const response = await fetch(`${BACKEND_URL}/listings/${encodeURIComponent(id)}`);
+  if (!response.ok) {
+    throw new Error('出品詳細の取得に失敗しました');
+  }
+  return await response.json();
+};
+
+// 7. eBayユーザー同意画面のURLを取得する（設定タブの「eBayでログイン」ボタンから使用）
+export const getEbayAuthUrl = async (): Promise<string> => {
+  const response = await fetch(`${BACKEND_URL}/ebay/auth-url`);
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || 'eBay認証URLの取得に失敗しました');
+  }
+  const data = await response.json();
+  return data.url;
+};
+
+// 8. eBayアカウントが接続済みかどうかを確認する
+export const getEbayStatus = async (): Promise<{ connected: boolean }> => {
+  const response = await fetch(`${BACKEND_URL}/ebay/status`);
+  if (!response.ok) {
+    return { connected: false };
   }
   return await response.json();
 };

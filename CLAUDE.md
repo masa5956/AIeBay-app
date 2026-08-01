@@ -42,18 +42,19 @@ Vite + React 18 + TypeScript + Tailwind CSS + `lucide-react`（アイコン） +
 |---|---|
 | [HomeDashboard.tsx](src/components/HomeDashboard.tsx) | ホーム。`getListings()`で取得した売上サマリー・最近の出品を表示（マウント時・出品成功後に再取得） |
 | [AnalyticsPanel.tsx](src/components/AnalyticsPanel.tsx) | 分析。`getAnalytics()`による月別出品額推移・カテゴリ別出品額構成グラフを表示 |
-| [SettingsPanel.tsx](src/components/SettingsPanel.tsx) | 設定。連携状態の表示と、開発者向け「AI解析をモックデータで代用」トグル（ON時は`mockAnalyzeImage`を使いGemini/Groqのクォータを消費しない。出品自体は実APIのまま） |
+| [SettingsPanel.tsx](src/components/SettingsPanel.tsx) | 設定。`getEbayStatus()`で取得した実際のeBay接続状態表示と「eBayでログイン」ボタン（`getEbayAuthUrl()`の同意URLへ遷移、完了後はどのeBayアカウントでログインしたかに応じてそのアカウントで出品される）、開発者向け「AI解析をモックデータで代用」トグル（ON時は`mockAnalyzeImage`を使いGemini/Groqのクォータを消費しない。出品自体は実APIのまま） |
 | [Step1_ImageUpload.tsx](src/components/Step1_ImageUpload.tsx)〜[Step4_Preview.tsx](src/components/Step4_Preview.tsx) | 出品ウィザード（撮影→AI解析結果補正→価格調整→最終確認）。[StepperHeader.tsx](src/components/StepperHeader.tsx)クリックでステップ間移動可（解析結果が無いうちはStep2以降へ移動不可） |
+| [ListingDetailModal.tsx](src/components/ListingDetailModal.tsx) | ホームの「最近の出品」をタップすると開く詳細モーダル。`getListingDetail(id)`で写真・説明文・商品仕様(aspects)を取得して表示 |
 | [Toast.tsx](src/components/Toast.tsx) / [CancelConfirmDialog.tsx](src/components/CancelConfirmDialog.tsx) | 完了・失敗通知 / 出品キャンセル確認 |
 | [BottomNav.tsx](src/components/BottomNav.tsx) | ホーム/分析/設定のタブ切替 |
 
 - **型定義**: [src/types/listing.ts](src/types/listing.ts)（`ProductData`, `Condition`, AIマルチエージェント分析結果の型）、
-  [src/types/app.ts](src/types/app.ts)（`TabType`, `RecentListing`, `SalesSummary`, `AnalyticsData`）。
+  [src/types/app.ts](src/types/app.ts)（`TabType`, `RecentListing`, `ListingDetail`, `SalesSummary`, `AnalyticsData`）。
 - **APIクライアント層**: [src/services/listingService.ts](src/services/listingService.ts)。
-  `analyzeImageWithAI` / `estimatePrice` / `publishToEbay` / `getListings` / `getAnalytics`がバックエンド
-  （既定`http://localhost:3001/api`、`VITE_BACKEND_URL`で変更可）を呼び出す実装。`mockAnalyzeImage` /
-  `mockPublishItem`（[src/mock/mockData.ts](src/mock/mockData.ts)のサンプルデータ）は設定タブのモックトグルや
-  オフライン確認用。
+  `analyzeImageWithAI` / `estimatePrice` / `publishToEbay` / `getListings` / `getAnalytics` / `getListingDetail` /
+  `getEbayAuthUrl` / `getEbayStatus`がバックエンド（既定`http://localhost:3001/api`、`VITE_BACKEND_URL`で変更可）を
+  呼び出す実装。`mockAnalyzeImage` / `mockPublishItem`（[src/mock/mockData.ts](src/mock/mockData.ts)のサンプル
+  データ）は設定タブのモックトグルやオフライン確認用。
 
 ### バックエンド
 
@@ -65,8 +66,9 @@ Vite + React 18 + TypeScript + Tailwind CSS + `lucide-react`（アイコン） +
 | `POST /api/estimate-price` | eBay Browse APIで類似商品検索→IQRで外れ値除去した価格統計＋市場トレンド/競合比較エージェント＋決定的な総合判定スコア（`scoreListing`）を算出 |
 | `POST /api/publish-ebay` | Sell Inventory API（Inventory Item→Offer→Publish）で出品確定。必須Item Specifics（Brand/Color/Connectivity/Model/Type、フォールバックの`categoryId=112529`が要求）を既定値で補完。成功後`saveListing()`でSupabaseに履歴保存 |
 | `GET /api/listings` | Supabaseの`listings`から最近の出品一覧・売上サマリーを取得（ホーム画面用） |
+| `GET /api/listings/:id` | 指定した`listing_id`1件分の全項目（説明文・商品仕様含む）を取得（出品詳細モーダル用） |
 | `GET /api/analytics` | 月別出品額推移（直近6ヶ月）・カテゴリ別出品額構成を集計（分析タブ用） |
-| `GET /api/ebay/auth-url` / `GET /api/ebay/callback` | eBayユーザー同意フロー（初回セットアップ用） |
+| `GET /api/ebay/auth-url` / `GET /api/ebay/callback` / `GET /api/ebay/status` | eBayユーザー同意フロー。`callback`は取得した`refresh_token`をSupabaseの`app_settings`に保存し、以後どのeBayアカウントで同意したかに応じてそのアカウントで出品される（アプリ内「eBayでログイン」ボタンから使用）。`status`は接続済みかどうかを返す |
 
 **主要な既知の制約**（詳細は[未実装・要注意な箇所](#未実装要注意な箇所)を参照）:
 - 市場トレンド分析は、eBay Browse APIの「現在アクティブな出品」のみに基づく需要推定であり、
@@ -82,11 +84,12 @@ Vite + React 18 + TypeScript + Tailwind CSS + `lucide-react`（アイコン） +
 | [server/groqClient.js](server/groqClient.js) | Groqクライアント（`groq-sdk`）と`GROQ_MODEL`定数（既定`meta-llama/llama-4-scout-17b-16e-instruct`）。画像入力時は`response_format`を指定せず`parseJsonLoose()`で緩くJSON抽出 |
 | [server/analysisAgents.js](server/analysisAgents.js) | `runConditionAgent`（商品状態・欠陥検出）、`runMarketTrendAgent` / `runCompetitorAgent`（市場トレンド・競合比較）、`scoreListing`（LLM不使用の決定的な重み付け計算による総合スコア） |
 | [server/priceStats.js](server/priceStats.js) | IQR外れ値除去`removeOutliersByIQR()`。`/api/estimate-price`が使用 |
-| [server/ebayAuth.js](server/ebayAuth.js) | eBay OAuth共通処理（アプリ/ユーザートークン取得、認可コード交換）。`index.js`・`setupPolicies.js`から利用 |
-| [server/envFile.js](server/envFile.js) | `.env`の特定キーをその場で書き換える`updateEnvValue()` |
+| [server/ebayAuth.js](server/ebayAuth.js) | eBay OAuth共通処理（アプリ/ユーザートークン取得、認可コード交換）。`getStoredRefreshToken()`はSupabaseの`app_settings`に保存済みのrefresh_tokenを優先し、無ければ`.env`の`EBAY_USER_REFRESH_TOKEN`にフォールバックする。`index.js`・`setupPolicies.js`から利用 |
+| [server/appSettingsRepository.js](server/appSettingsRepository.js) | `app_settings`テーブル（key-value）への読み書き（`getSetting` / `setSetting`）。アプリ内「eBayでログイン」で取得したrefresh_tokenの永続化に使用（Renderの再起動・再デプロイをまたいで維持される） |
+| [server/envFile.js](server/envFile.js) | `.env`の特定キーをその場で書き換える`updateEnvValue()`（ローカル開発時の簡易フォールバック用） |
 | [server/setupPolicies.js](server/setupPolicies.js) | （`npm run setup:policies`）配送・返品ポリシーと出荷元ロケーションの初回セットアップ。`ensureBusinessPolicyOptIn()`で事前にBusiness Policy機能へオプトイン（新規Sandboxユーザーはデフォルト無効なため） |
 | [server/supabaseClient.js](server/supabaseClient.js) | Supabaseクライアント（`service_role`キー使用）。`SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY`未設定時は`supabase`が`null`になり、関連機能のみ安全にスキップ（サーバー全体は落ちない） |
-| [server/listingsRepository.js](server/listingsRepository.js) | `listings`テーブルへの読み書き（`saveListing` / `getRecentListings` / `getSalesSummary` / `getAnalytics`） |
+| [server/listingsRepository.js](server/listingsRepository.js) | `listings`テーブルへの読み書き（`saveListing` / `getRecentListings` / `getListingByListingId` / `getSalesSummary` / `getAnalytics`） |
 
 ### データベース（Supabase）
 
@@ -103,7 +106,15 @@ create table public.listings (
   status text not null default 'ACTIVE',
   image_url text,
   category text not null default 'Other',
+  description text,
+  aspects jsonb,
   created_at timestamptz not null default now()
+);
+
+-- アプリ内「eBayでログイン」で取得したrefresh_token等を保存するkey-valueテーブル
+create table public.app_settings (
+  key text primary key,
+  value text
 );
 ```
 
@@ -114,14 +125,15 @@ create table public.listings (
 `.env`にAPIキーを設定するだけでは出品(`/api/publish-ebay`)は完了しない。以下を一度だけ順番に行う必要がある。
 
 1. eBay Developer Portalでキーセット（`EBAY_CLIENT_ID` / `EBAY_CLIENT_SECRET`）とRuName（`EBAY_RU_NAME`）を作成し、
-   RuNameの「Your auth accepted URL」に `http://localhost:3001/api/ebay/callback` を設定する
+   RuNameの「Your auth accepted URL」に `http://localhost:3001/api/ebay/callback`（本番は
+   `https://<バックエンドの公開URL>/api/ebay/callback`）を設定する
    （eBayが非httpsのlocalhostを許可しない場合はngrok等で公開URLを用意する）。
-2. `npm run server` でバックエンドを起動し、ブラウザで `http://localhost:3001/api/ebay/auth-url` を開いて
-   得られた`url`にアクセス、eBayアカウントでログインしてアプリを許可する。
-3. リダイレクト後、`.env`の`EBAY_USER_REFRESH_TOKEN`が自動保存される。バックエンドを再起動する。
-4. `npm run setup:policies` を実行し、配送・返品ポリシーと出荷元ロケーションを作成する
+2. アプリの「設定」タブ →「eBayでログイン」ボタンから、eBayの同意画面でログインしたいアカウントにログインし
+   アプリを許可する。**このボタンで同意したeBayアカウントで以後出品されるようになる**（`/api/ebay/callback`が
+   `refresh_token`をSupabaseの`app_settings`テーブルへ自動保存するため、バックエンドの再起動は不要）。
+3. `npm run setup:policies` を実行し、配送・返品ポリシーと出荷元ロケーションを作成する
    （出荷元ロケーションを新規作成する場合は`EBAY_LOCATION_ADDRESS_LINE1`等の住所を`.env`に先に設定しておく）。
-5. これで `/api/publish-ebay` が実行可能になる。
+4. これで `/api/publish-ebay` が実行可能になる。設定タブのeBay連携状態が「接続中」になっていることで確認できる。
 
 ## デプロイ
 

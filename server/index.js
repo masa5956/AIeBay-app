@@ -10,12 +10,14 @@ import {
   getAppAccessToken,
   getUserAccessToken,
   exchangeAuthCodeForTokens,
+  getStoredRefreshToken,
 } from './ebayAuth.js';
 import { updateEnvValue } from './envFile.js';
+import { setSetting } from './appSettingsRepository.js';
 import { AI_PROVIDER, generateImageJson } from './aiProvider.js';
 import { runConditionAgent, runMarketTrendAgent, runCompetitorAgent, scoreListing } from './analysisAgents.js';
 import { supabase, PRODUCT_IMAGES_BUCKET } from './supabaseClient.js';
-import { saveListing, getRecentListings, getSalesSummary, getAnalytics } from './listingsRepository.js';
+import { saveListing, getRecentListings, getSalesSummary, getAnalytics, getListingByListingId } from './listingsRepository.js';
 import { removeOutliersByIQR } from './priceStats.js';
 
 dotenv.config();
@@ -338,6 +340,8 @@ app.post('/api/publish-ebay', async (req, res) => {
         price: productData.pricing.suggestedPrice,
         imageUrl,
         category: aspects.Type?.[0] || 'Other',
+        description: productData.description,
+        aspects,
       });
     } catch (dbError) {
       console.error('出品履歴の保存に失敗しました:', dbError);
@@ -376,6 +380,34 @@ app.get('/api/listings', async (req, res) => {
   } catch (error) {
     console.error('出品履歴の取得に失敗しました:', error);
     return res.status(500).json({ error: '出品履歴の取得に失敗しました。' });
+  }
+});
+
+// =================================================================
+// 出品詳細取得エンドポイント (/api/listings/:id)
+// 最近の出品一覧から選択した1件の詳細（説明文・商品仕様を含む全項目）を返す
+// =================================================================
+app.get('/api/listings/:id', async (req, res) => {
+  try {
+    const row = await getListingByListingId(req.params.id);
+    if (!row) {
+      return res.status(404).json({ error: '出品情報が見つかりませんでした。' });
+    }
+
+    return res.json({
+      id: row.listing_id,
+      title: row.title,
+      price: Number(row.price),
+      status: row.status,
+      date: row.created_at.split('T')[0],
+      imageUrl: row.image_url || undefined,
+      category: row.category,
+      description: row.description || '',
+      aspects: row.aspects || {},
+    });
+  } catch (error) {
+    console.error('出品詳細の取得に失敗しました:', error);
+    return res.status(500).json({ error: '出品詳細の取得に失敗しました。' });
   }
 });
 
@@ -423,21 +455,30 @@ app.get('/api/ebay/callback', async (req, res) => {
 
   try {
     const tokens = await exchangeAuthCodeForTokens(code);
+    // Supabaseに保存することで、Renderのような永続ディスクの無い環境でも
+    // 再起動・再デプロイをまたいでログイン状態を維持できる（アプリ内ログインの本体）。
+    await setSetting('ebay_refresh_token', tokens.refresh_token);
+    // ローカル開発時の簡易確認用に.envにも書き込む（Supabase未設定時のフォールバックとして使われる）
     updateEnvValue('EBAY_USER_REFRESH_TOKEN', tokens.refresh_token);
 
-    // Render等の再起動時にファイルシステムが引き継がれない環境向けに、
-    // refresh_tokenを画面にも表示し、ダッシュボードの環境変数へ手動反映できるようにする
     return res.send(
       `<h1>eBayとの連携が完了しました</h1>
-       <p>refresh_tokenを.envに保存しました（このプロセスが再起動されるまで有効）。</p>
-       <p>Renderなど永続ディスクの無い環境では、以下の値をコピーして
-       ダッシュボードの環境変数 <code>EBAY_USER_REFRESH_TOKEN</code> に手動で設定してください。</p>
-       <textarea readonly style="width:100%;height:4em;">${tokens.refresh_token}</textarea>
-       <p>設定後はこのページを閉じてください。</p>`
+       <p>このタブを閉じてアプリに戻ってください。再起動不要ですぐに出品できます。</p>`
     );
   } catch (err) {
     console.error('eBay OAuth Callback Error:', err?.response?.data || err);
     return res.status(500).send('<h1>トークン交換に失敗しました</h1><p>サーバーのログを確認してください。</p>');
+  }
+});
+
+// ③ 現在のeBay接続状態を確認する（設定タブでの表示用）
+app.get('/api/ebay/status', async (req, res) => {
+  try {
+    const refreshToken = await getStoredRefreshToken();
+    return res.json({ connected: !!refreshToken });
+  } catch (error) {
+    console.error('eBay接続状態の確認に失敗しました:', error);
+    return res.status(500).json({ error: 'eBay接続状態の確認に失敗しました。' });
   }
 });
 

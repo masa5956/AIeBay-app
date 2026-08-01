@@ -5,10 +5,16 @@ interface HomeDashboardProps {
   salesSummary: SalesSummary;
   recentListings: RecentListing[];
   onStartListing: () => void;
+  onSelectListing: (id: string) => void;
 }
 
 // ホームタブ: 売上ダッシュボード + 最近の出品一覧
-export default function HomeDashboard({ salesSummary, recentListings, onStartListing }: HomeDashboardProps) {
+export default function HomeDashboard({
+  salesSummary,
+  recentListings,
+  onStartListing,
+  onSelectListing,
+}: HomeDashboardProps) {
   return (
     <div className="space-y-6">
       {/* アプリヘッダー */}
@@ -75,9 +81,10 @@ export default function HomeDashboard({ salesSummary, recentListings, onStartLis
 
         <div className="space-y-2">
           {recentListings.map((item) => (
-            <div
+            <button
               key={item.id}
-              className="bg-white border border-slate-200 rounded-xl p-3 flex justify-between items-center shadow-sm hover:border-blue-200 hover:shadow-md transition"
+              onClick={() => onSelectListing(item.id)}
+              className="w-full text-left bg-white border border-slate-200 rounded-xl p-3 flex justify-between items-center shadow-sm hover:border-blue-200 hover:shadow-md transition"
             >
               <div className="space-y-1 max-w-[200px]">
                 <p className="text-xs font-bold text-slate-800 truncate">{item.title}</p>
@@ -93,7 +100,7 @@ export default function HomeDashboard({ salesSummary, recentListings, onStartLis
                   {item.status}
                 </span>
               </div>
-            </div>
+            </button>
           ))}
         </div>
       </div>

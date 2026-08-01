@@ -1,7 +1,7 @@
 import { supabase } from './supabaseClient.js';
 
 // 出品成功時にlistingsテーブルへ1件保存する
-export async function saveListing({ sku, listingId, title, price, imageUrl, category }) {
+export async function saveListing({ sku, listingId, title, price, imageUrl, category, description, aspects }) {
   if (!supabase) return; // Supabase未設定時は履歴保存をスキップ（出品自体は成功させる）
   const { error } = await supabase.from('listings').insert({
     sku,
@@ -11,8 +11,18 @@ export async function saveListing({ sku, listingId, title, price, imageUrl, cate
     status: 'ACTIVE',
     image_url: imageUrl || null,
     category: category || 'Other',
+    description: description || null,
+    aspects: aspects || null,
   });
   if (error) throw error;
+}
+
+// 出品詳細画面向け: listing_idを指定して1件分の全カラムを取得する
+export async function getListingByListingId(listingId) {
+  if (!supabase) return null;
+  const { data, error } = await supabase.from('listings').select('*').eq('listing_id', listingId).maybeSingle();
+  if (error) throw error;
+  return data;
 }
 
 // 最近の出品一覧を新しい順に取得する
