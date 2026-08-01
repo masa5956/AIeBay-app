@@ -210,10 +210,19 @@ app.post('/api/publish-ebay', async (req, res) => {
       : 'https://via.placeholder.com/500';
 
     // Step2で確認・編集された商品仕様(Item Specifics)一覧をeBayのaspects形式に変換
+    // eBayの商品仕様(Item Specifics)は1つの仕様名に複数の値を持てる仕様のため、
+    // カンマ区切りの値（例: Features）は配列に分割して送る。
+    // また、値1つあたり65文字までという制限があるため安全のため切り詰める。
     const aspects = {};
     for (const { key, value } of productData.aspects || []) {
-      if (key && value) {
-        aspects[key] = [value];
+      if (!key || !value) continue;
+      const values = value
+        .split(',')
+        .map((v) => v.trim())
+        .filter(Boolean)
+        .map((v) => (v.length > 65 ? v.slice(0, 65) : v));
+      if (values.length > 0) {
+        aspects[key] = values;
       }
     }
     if (!aspects.Brand) aspects.Brand = [productData.brand || 'Unbranded'];
