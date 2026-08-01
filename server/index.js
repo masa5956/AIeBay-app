@@ -332,8 +332,15 @@ app.get('/api/ebay/callback', async (req, res) => {
     const tokens = await exchangeAuthCodeForTokens(code);
     updateEnvValue('EBAY_USER_REFRESH_TOKEN', tokens.refresh_token);
 
+    // Render等の再起動時にファイルシステムが引き継がれない環境向けに、
+    // refresh_tokenを画面にも表示し、ダッシュボードの環境変数へ手動反映できるようにする
     return res.send(
-      '<h1>eBayとの連携が完了しました</h1><p>refresh_tokenを.envに保存しました。このタブを閉じてサーバーを再起動してください。</p>'
+      `<h1>eBayとの連携が完了しました</h1>
+       <p>refresh_tokenを.envに保存しました（このプロセスが再起動されるまで有効）。</p>
+       <p>Renderなど永続ディスクの無い環境では、以下の値をコピーして
+       ダッシュボードの環境変数 <code>EBAY_USER_REFRESH_TOKEN</code> に手動で設定してください。</p>
+       <textarea readonly style="width:100%;height:4em;">${tokens.refresh_token}</textarea>
+       <p>設定後はこのページを閉じてください。</p>`
     );
   } catch (err) {
     console.error('eBay OAuth Callback Error:', err?.response?.data || err);
