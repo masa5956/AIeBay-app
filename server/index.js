@@ -80,6 +80,7 @@ app.post('/api/analyze-image', upload.single('image'), async (req, res) => {
     "Size": "サイズ（判別できれば、できなければ省略）",
     "Department": "対象（Unisex/Men/Women/Kidsなど、該当すれば）",
     "Country/Region of Manufacture": "製造国（パッケージ等から読み取れれば）",
+    "Connectivity": "接続方式（Bluetooth/Wired/Wi-Fiなど、該当すれば。無ければ Does not apply）",
     "MPN": "型番が無ければ Does not apply",
     "UPC": "バーコードが読めなければ Does not apply",
     "Features": "特徴をカンマ区切りで",
@@ -231,10 +232,19 @@ app.post('/api/publish-ebay', async (req, res) => {
         aspects[key] = values;
       }
     }
-    if (!aspects.Brand) aspects.Brand = [productData.brand || 'Unbranded'];
-    if (!aspects.Model) aspects.Model = [productData.model || 'N/A'];
-    // Colorは多くのカテゴリで必須項目のため、AIが検出できなかった場合の既定値を用意する
-    if (!aspects.Color) aspects.Color = ['Does not apply'];
+    // フォールバックのcategoryId(112529)が必須とするItem Specifics一式
+    // （eBay Taxonomy APIのget_item_aspects_for_categoryで確認済み: Brand, Color, Connectivity, Model, Type）。
+    // AIが検出できなかった項目は既定値で埋め、出品失敗を防ぐ。
+    const REQUIRED_ASPECT_DEFAULTS = {
+      Brand: productData.brand || 'Unbranded',
+      Model: productData.model || 'N/A',
+      Color: 'Does not apply',
+      Type: 'Does not apply',
+      Connectivity: 'Does not apply',
+    };
+    for (const [key, defaultValue] of Object.entries(REQUIRED_ASPECT_DEFAULTS)) {
+      if (!aspects[key]) aspects[key] = [defaultValue];
+    }
 
     // Step 1: Inventory Item の作成 (PUT /sell/inventory/v1/inventory_item/{sku})
     await axios.put(

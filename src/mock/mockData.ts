@@ -12,6 +12,7 @@ export const mockProductData: Omit<ProductData, 'imageUrl'> = {
     { key: 'Model', value: 'WH-1000XM5' },
     { key: 'Type', value: 'Over-Ear Headphones' },
     { key: 'Color', value: 'Black' },
+    { key: 'Connectivity', value: 'Bluetooth, Wired' },
     { key: 'Material', value: 'Plastic, Metal' },
     { key: 'Size', value: 'Standard' },
     { key: 'Department', value: 'Unisex Adults' },
