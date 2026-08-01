@@ -3,6 +3,7 @@ import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContai
 import { useLanguage } from '../i18n/LanguageContext';
 import { getAnalytics } from '../services/listingService';
 import type { AnalyticsData } from '../types/app';
+import GenreComparisonPanel from './GenreComparisonPanel';
 
 // 分析タブ: 実際の出品データ(DB)に基づく出品額推移・カテゴリ別出品額のグラフ表示
 export default function AnalyticsPanel() {
@@ -82,6 +83,8 @@ export default function AnalyticsPanel() {
       </div>
 
       <p className="text-[10px] text-slate-400 text-center">{t('analyticsCaveat')}</p>
+
+      <GenreComparisonPanel />
     </div>
   );
 }

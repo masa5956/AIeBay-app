@@ -1,5 +1,5 @@
 import type { CompetitorSuggestions, ConditionAssessment, MarketTrend, ProductAspect, ProductData } from '../types/listing';
-import type { AnalyticsData, RecentListing, SalesSummary } from '../types/app';
+import type { AnalyticsData, GenreComparisonResult, RecentListing, SalesSummary } from '../types/app';
 import { mockProductData } from '../mock/mockData';
 
 const BACKEND_URL = `${import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001'}/api`;
@@ -157,4 +157,19 @@ export const getAnalytics = async (): Promise<AnalyticsData> => {
     throw new Error('分析データの取得に失敗しました');
   }
   return await response.json();
+};
+
+// 6. 出品を検討している複数ジャンル(キーワード)をeBay Browse APIの現況で比較する
+export const compareGenres = async (genres: string[]): Promise<GenreComparisonResult[]> => {
+  const response = await fetch(`${BACKEND_URL}/genre-comparison`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ genres }),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || 'ジャンル比較の取得に失敗しました');
+  }
+  const data = await response.json();
+  return data.results;
 };

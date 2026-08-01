@@ -98,6 +98,12 @@ npm run setup:policies # eBay Business Policies・出荷元ロケーションの
   - `GET /api/analytics` : `listings`テーブルから月別出品額推移（直近6ヶ月、出品が無い月も0円で埋める）と
     カテゴリ別出品額構成（上位6件）を集計して返す。分析タブ（[AnalyticsPanel.tsx](src/components/AnalyticsPanel.tsx)）
     が表示に使用。
+  - `POST /api/genre-comparison` : `{genres: string[]}`（2〜6件）を受け取り、[server/genreComparison.js](server/genreComparison.js)の
+    `compareGenres()`でジャンルごとにeBay Browse APIを検索し、現在のアクティブ出品件数・IQR外れ値除去後の価格帯から
+    比較対象間の相対的な需要スコア（出品数が少なく価格帯が安定しているほど高スコア）を算出して返す。
+    分析タブの[GenreComparisonPanel.tsx](src/components/GenreComparisonPanel.tsx)が使用。**LLMは使わない決定的な
+    計算であり、また実際の売却実績データではなく「現在の供給状況」からの推定である**点に注意（Marketplace Insights
+    APIのような売却実績専用APIは個別承認制のため未使用）。
   - `GET /api/ebay/auth-url` : eBayユーザー同意画面のURLを発行する（初回セットアップ用）。
   - `GET /api/ebay/callback` : 同意後にeBayからリダイレクトされ、認可コードを`refresh_token`に交換して
     `.env`の`EBAY_USER_REFRESH_TOKEN`に自動保存する。
@@ -121,6 +127,10 @@ npm run setup:policies # eBay Business Policies・出荷元ロケーションの
   決定的な重み付け計算による総合判定スコア）を提供。各エージェントは呼び出し元で`Promise.all`により並列実行され、
   レスポンス速度を確保している。**市場トレンド分析はeBay Browse APIの「現在アクティブな出品」のみに基づく需要推定
   であり、実際の売却実績データではない**（Marketplace Insights API等へのアクセス権が無いため）。
+- **[server/priceStats.js](server/priceStats.js)**: IQR（四分位範囲）外れ値除去ロジック`removeOutliersByIQR()`を
+  切り出し、`/api/estimate-price`と`/api/genre-comparison`の両方から共有利用する。
+- **[server/genreComparison.js](server/genreComparison.js)**: `compareGenres(genres)`を提供。複数ジャンルの
+  eBay Browse API検索結果から出品件数・価格帯を比較し、決定的な計算（LLM不使用）で相対的な需要スコアを算出する。
 - **[server/ebayAuth.js](server/ebayAuth.js)**: eBay OAuthの共通処理（アプリトークン取得・ユーザートークン取得・
   認可コード交換）を集約。`server/index.js` と `server/setupPolicies.js` の両方から利用する。
 - **[server/envFile.js](server/envFile.js)**: `.env`の特定キーをその場で書き換える`updateEnvValue()`を提供。

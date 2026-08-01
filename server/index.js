@@ -16,6 +16,8 @@ import { AI_PROVIDER, generateImageJson } from './aiProvider.js';
 import { runConditionAgent, runMarketTrendAgent, runCompetitorAgent, scoreListing } from './analysisAgents.js';
 import { supabase, PRODUCT_IMAGES_BUCKET } from './supabaseClient.js';
 import { saveListing, getRecentListings, getSalesSummary, getAnalytics } from './listingsRepository.js';
+import { removeOutliersByIQR } from './priceStats.js';
+import { compareGenres } from './genreComparison.js';
 
 dotenv.config();
 
@@ -55,19 +57,6 @@ const CONDITION_ID_MAP = {
   USED_FAIR: '5000',
 };
 
-// 四分位範囲(IQR)アルゴリズムによる外れ値除去
-function removeOutliersByIQR(sortedPrices) {
-  const q1Index = Math.floor(sortedPrices.length * 0.25);
-  const q3Index = Math.floor(sortedPrices.length * 0.75);
-  const q1 = sortedPrices[q1Index];
-  const q3 = sortedPrices[Math.min(q3Index, sortedPrices.length - 1)];
-  const iqr = q3 - q1;
-  const lowerBound = q1 - 1.5 * iqr;
-  const upperBound = q3 + 1.5 * iqr;
-
-  const filtered = sortedPrices.filter((p) => p >= lowerBound && p <= upperBound);
-  return filtered.length > 0 ? filtered : sortedPrices;
-}
 
 // =================================================================
 // 1. AI画像解析エンドポイント (/api/analyze-image)
@@ -403,6 +392,29 @@ app.get('/api/analytics', async (req, res) => {
   } catch (error) {
     console.error('分析データの取得に失敗しました:', error);
     return res.status(500).json({ error: '分析データの取得に失敗しました。' });
+  }
+});
+
+// =================================================================
+// ジャンル比較エンドポイント (/api/genre-comparison)
+// 出品を検討している複数ジャンル(キーワード)について、eBay Browse APIの
+// 現在のアクティブ出品状況(件数・価格帯)から相対的な需要スコアを算出する。
+// =================================================================
+app.post('/api/genre-comparison', async (req, res) => {
+  try {
+    const { genres } = req.body;
+    if (!Array.isArray(genres) || genres.length < 2) {
+      return res.status(400).json({ error: '比較するジャンルを2件以上指定してください。' });
+    }
+    if (genres.length > 6) {
+      return res.status(400).json({ error: '比較できるジャンルは最大6件までです。' });
+    }
+
+    const results = await compareGenres(genres);
+    return res.json({ results });
+  } catch (error) {
+    console.error('ジャンル比較の取得に失敗しました:', error?.response?.data || error);
+    return res.status(500).json({ error: 'ジャンル比較の取得に失敗しました。' });
   }
 });
 
