@@ -19,9 +19,11 @@ export async function ensureBusinessPolicyOptIn(token) {
     );
     console.log('Business Policy(SELLING_POLICY_MANAGEMENT)へのオプトインが完了しました。');
   } catch (err) {
-    // 既にオプトイン済みの場合はエラーになることがあるため、その場合は無視して続行する
-    const errorId = err?.response?.data?.errors?.[0]?.errorId;
-    if (errorId === 20401 || errorId === 20400) {
+    // 既にオプトイン済みの場合はエラーになることがある（eBay側のエラーIDが状況により複数存在するため、
+    // 個別のIDだけでなくメッセージ内容からも判定する）。その場合は無視して続行する。
+    const errorMessage = err?.response?.data?.errors?.[0]?.message || '';
+    const alreadyOptedIn = /already/i.test(errorMessage);
+    if (alreadyOptedIn) {
       console.log('既にBusiness Policyへオプトイン済みです。');
       return;
     }
