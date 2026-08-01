@@ -33,15 +33,23 @@ export async function getRecentListings(limit = 20) {
 // soldItemsCountは現時点では常に0になる（将来的に売却検知の仕組みを追加した際に
 // 意味を持つよう、集計ロジックだけ先に用意している）。
 export async function getSalesSummary() {
-  const empty = { totalRevenue: 0, monthlyRevenue: 0, activeListingsCount: 0, soldItemsCount: 0 };
+  const empty = {
+    totalRevenue: 0,
+    monthlyRevenue: 0,
+    monthlyRevenueChangePercent: null,
+    activeListingsCount: 0,
+    soldItemsCount: 0,
+  };
   if (!supabase) return empty; // Supabase未設定時はゼロ集計を返す
 
   const { data, error } = await supabase.from('listings').select('price, status, created_at');
   if (error) throw error;
 
   const now = new Date();
+  const prevMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   let totalRevenue = 0;
   let monthlyRevenue = 0;
+  let previousMonthRevenue = 0;
   let activeListingsCount = 0;
   let soldItemsCount = 0;
 
@@ -53,13 +61,23 @@ export async function getSalesSummary() {
       const createdAt = new Date(row.created_at);
       if (createdAt.getMonth() === now.getMonth() && createdAt.getFullYear() === now.getFullYear()) {
         monthlyRevenue += price;
+      } else if (
+        createdAt.getMonth() === prevMonthDate.getMonth() &&
+        createdAt.getFullYear() === prevMonthDate.getFullYear()
+      ) {
+        previousMonthRevenue += price;
       }
     } else if (row.status === 'ACTIVE') {
       activeListingsCount += 1;
     }
   }
 
-  return { totalRevenue, monthlyRevenue, activeListingsCount, soldItemsCount };
+  // 先月の売上が0の場合は変化率が定義できない（0除算・無限大になるため）ためnullを返し、
+  // フロントエンド側でバッジ自体を非表示にする
+  const monthlyRevenueChangePercent =
+    previousMonthRevenue > 0 ? ((monthlyRevenue - previousMonthRevenue) / previousMonthRevenue) * 100 : null;
+
+  return { totalRevenue, monthlyRevenue, monthlyRevenueChangePercent, activeListingsCount, soldItemsCount };
 }
 
 // 分析タブ向け: 月別出品額推移(直近6ヶ月)・カテゴリ別出品額構成を集計する。

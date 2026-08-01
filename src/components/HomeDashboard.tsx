@@ -34,9 +34,18 @@ export default function HomeDashboard({ salesSummary, recentListings, onStartLis
               ${salesSummary.monthlyRevenue.toLocaleString()}
             </h2>
           </div>
-          <span className="bg-emerald-500/20 text-emerald-400 text-[10px] font-bold px-2 py-1 rounded-full border border-emerald-500/30">
-            +14.2%
-          </span>
+          {salesSummary.monthlyRevenueChangePercent !== null && (
+            <span
+              className={`text-[10px] font-bold px-2 py-1 rounded-full border ${
+                salesSummary.monthlyRevenueChangePercent >= 0
+                  ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                  : 'bg-red-500/20 text-red-400 border-red-500/30'
+              }`}
+            >
+              {salesSummary.monthlyRevenueChangePercent >= 0 ? '+' : ''}
+              {salesSummary.monthlyRevenueChangePercent.toFixed(1)}%
+            </span>
+          )}
         </div>
 
         <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-700/60 text-xs">

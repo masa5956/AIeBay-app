@@ -169,7 +169,8 @@ GPT-4o Visionを想定していたが、実装はNode.js/Express + Google Gemini
   モードでAI解析自体をスキップした場合は、`blob:` URLにフォールバックし、`/api/publish-ebay`側で
   プレースホルダー画像（`https://via.placeholder.com/500`）に強制差し替える暫定対応が働く。
 - **売上実績の追跡なし**: `listings`テーブルの「売却済み(SOLD)」へのステータス更新の仕組みが無いため、全出品は
-  ACTIVEのまま記録され続け、`totalRevenue`/`monthlyRevenue`/`soldItemsCount`は常に0。実運用にはeBayからの
+  ACTIVEのまま記録され続け、`totalRevenue`/`monthlyRevenue`/`soldItemsCount`は常に0。ホームの月次売上バッジ
+  （前月比%、`monthlyRevenueChangePercent`）も前月売上が0のため`null`になり非表示のまま。実運用にはeBayからの
   売却通知（Webhook等）を受けてステータスを更新する仕組みの追加が必要。
 - **`categoryId`は仮の固定値**（`112529`）。実運用にはTaxonomy API等での適切なカテゴリ判定が必要。
 - **AI APIのクォータ**: 画像1枚のアップロードあたり最大4回（基本抽出・商品状態・市場トレンド・競合比較）の

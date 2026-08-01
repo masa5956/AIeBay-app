@@ -52,6 +52,7 @@ export default function App() {
   const [salesSummary, setSalesSummary] = useState<SalesSummary>({
     totalRevenue: 0,
     monthlyRevenue: 0,
+    monthlyRevenueChangePercent: null,
     activeListingsCount: 0,
     soldItemsCount: 0,
   });

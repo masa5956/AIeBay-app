@@ -12,6 +12,8 @@ export interface RecentListing {
 export interface SalesSummary {
   totalRevenue: number;
   monthlyRevenue: number;
+  // 先月の売上が0の場合は変化率が定義できないためnull（バッジ非表示の判定に使う）
+  monthlyRevenueChangePercent: number | null;
   activeListingsCount: number;
   soldItemsCount: number;
 }
