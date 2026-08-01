@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import type { TabType, RecentListing, SalesSummary } from './types/app';
 import type { ProductData } from './types/listing';
-import { analyzeImageWithAI, publishToEbay } from './services/listingService';
+import { analyzeImageWithAI, mockAnalyzeImage, publishToEbay } from './services/listingService';
 import { useLanguage } from './i18n/LanguageContext';
 import BottomNav from './components/BottomNav';
 import Toast, { type Feedback } from './components/Toast';
@@ -32,6 +32,14 @@ export default function App() {
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   // 出品作業キャンセルの確認ダイアログ表示中かどうか
   const [isCancelConfirmOpen, setIsCancelConfirmOpen] = useState<boolean>(false);
+  // 開発者向け: ONの間はAI解析をモックデータで代用しGemini/Groqのクォータを消費しない（出品自体は実APIを使用）
+  const [useMockAnalysis, setUseMockAnalysis] = useState<boolean>(
+    () => localStorage.getItem('ebay-ai-lister-use-mock-analysis') === 'true'
+  );
+  const handleToggleMockAnalysis = (value: boolean) => {
+    setUseMockAnalysis(value);
+    localStorage.setItem('ebay-ai-lister-use-mock-analysis', String(value));
+  };
 
   // トースト通知を一定時間後に自動で閉じる
   useEffect(() => {
@@ -63,7 +71,7 @@ export default function App() {
     setIsLoading(true);
     setLoadingText(t('loadingAnalyzing'));
     try {
-      const result = await analyzeImageWithAI(file);
+      const result = useMockAnalysis ? await mockAnalyzeImage(file) : await analyzeImageWithAI(file);
       setProductData(result);
       setStep(2);
     } catch (err) {
@@ -195,7 +203,9 @@ export default function App() {
               />
             )}
             {activeTab === 'analytics' && <AnalyticsPanel />}
-            {activeTab === 'settings' && <SettingsPanel />}
+            {activeTab === 'settings' && (
+              <SettingsPanel useMockAnalysis={useMockAnalysis} onToggleMockAnalysis={handleToggleMockAnalysis} />
+            )}
           </main>
         )}
 

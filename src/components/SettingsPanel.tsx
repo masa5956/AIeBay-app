@@ -1,7 +1,12 @@
 import { useLanguage } from '../i18n/LanguageContext';
 
-// 設定タブ: 連携状態の表示 + 表示言語の切替
-export default function SettingsPanel() {
+interface SettingsPanelProps {
+  useMockAnalysis: boolean;
+  onToggleMockAnalysis: (value: boolean) => void;
+}
+
+// 設定タブ: 連携状態の表示 + 表示言語の切替 + 開発者向けモック切替
+export default function SettingsPanel({ useMockAnalysis, onToggleMockAnalysis }: SettingsPanelProps) {
   const { language, setLanguage, t } = useLanguage();
 
   return (
@@ -41,6 +46,32 @@ export default function SettingsPanel() {
             </button>
           </div>
         </div>
+      </div>
+
+      <h2 className="text-xs font-bold text-slate-500 pt-2">{t('settingsDevSection')}</h2>
+      <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-2 text-xs shadow-sm">
+        <div className="flex justify-between items-center py-1">
+          <span>{t('settingsMockAnalysis')}</span>
+          <div className="flex rounded-full border border-slate-200 overflow-hidden">
+            <button
+              onClick={() => onToggleMockAnalysis(true)}
+              className={`px-3 py-1 font-bold transition-colors ${
+                useMockAnalysis ? 'bg-amber-500 text-white' : 'bg-white text-slate-500'
+              }`}
+            >
+              {t('mockModeOn')}
+            </button>
+            <button
+              onClick={() => onToggleMockAnalysis(false)}
+              className={`px-3 py-1 font-bold transition-colors ${
+                !useMockAnalysis ? 'bg-blue-600 text-white' : 'bg-white text-slate-500'
+              }`}
+            >
+              {t('mockModeOff')}
+            </button>
+          </div>
+        </div>
+        <p className="text-slate-400">{t('settingsMockAnalysisDesc')}</p>
       </div>
     </div>
   );
