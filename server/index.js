@@ -471,18 +471,23 @@ app.get('/api/ebay/callback', async (req, res) => {
   try {
     const tokens = await exchangeAuthCodeForTokens(code);
 
+    // Supabaseのebay_connectionsにrefresh_tokenを先に保存する（Renderのような永続ディスクの無い
+    // 環境でも再起動・再デプロイをまたいでログイン状態を維持できる、アプリ内ログインの本体）。
+    // Business Policy自動セットアップが失敗しても、ログイン自体は必ず成功させる。
+    await setEbayConnection(userId, { refreshToken: tokens.refresh_token });
+
     // Business Policies・出荷元ロケーションをこのeBayアカウントに対して自動セットアップ
-    // （get-or-createのため、既存アカウントの再ログインでも安全に何度でも実行できる）
-    let policyInfo = {};
+    // （get-or-createのため、既存アカウントの再ログインでも安全に何度でも実行できる）。
+    // 注意: 認可コード交換直後のaccess_token(tokens.access_token)ではSell Account APIの
+    // 呼び出しが不安定になることがあるため、保存直後のrefresh_tokenからrefresh token grantで
+    // 改めて取得したaccess_token（実際の出品時と同じ経路）を使う。
     try {
-      policyInfo = await setupEbayPoliciesForToken(tokens.access_token);
+      const accessToken = await getUserAccessToken(userId);
+      const policyInfo = await setupEbayPoliciesForToken(accessToken);
+      await setEbayConnection(userId, { refreshToken: tokens.refresh_token, ...policyInfo });
     } catch (policyErr) {
       console.error('Business Policy自動セットアップに失敗しました:', policyErr?.response?.data || policyErr);
     }
-
-    // Supabaseのebay_connectionsに保存することで、Renderのような永続ディスクの無い環境でも
-    // 再起動・再デプロイをまたいでログイン状態を維持できる（アプリ内ログインの本体）。
-    await setEbayConnection(userId, { refreshToken: tokens.refresh_token, ...policyInfo });
 
     return res.send(
       `<h1>eBayとの連携が完了しました</h1>
