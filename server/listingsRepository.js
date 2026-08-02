@@ -31,12 +31,14 @@ export async function getListingByListingId(userId, listingId) {
   return data;
 }
 
-// 最近の出品一覧を新しい順に取得する（ログイン中のユーザー分のみ）
+// 最近の出品一覧を新しい順に取得する（ログイン中のユーザー分のみ）。
+// 一覧表示では description/aspects（サイズの大きいjsonb/長文）を使わないため、
+// 転送量削減のため必要な列のみ選択する（詳細取得はgetListingByListingId側で全列取得する）。
 export async function getRecentListings(userId, limit = 20) {
   if (!supabase) return []; // Supabase未設定時は空一覧を返す
   const { data, error } = await supabase
     .from('listings')
-    .select('*')
+    .select('listing_id, title, price, status, image_url, created_at')
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
     .limit(limit);

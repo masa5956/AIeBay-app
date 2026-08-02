@@ -30,13 +30,14 @@ npm run setup:policies # eBay Business Policies・出荷元ロケーションの
 ### フロントエンド
 
 Vite + React18 + TS + Tailwind + `lucide-react` + `recharts`。[App.tsx](src/App.tsx)は状態管理と画面組み立てのみの
-薄いシェルで、各画面は[src/components/](src/components/)に分割。
+薄いシェルで、各画面は[src/components/](src/components/)に分割。`AnalyticsPanel`/`ListingDetailModal`は
+`React.lazy`で遅延読み込み（recharts依存の`AnalyticsPanel`だけで約100KB gzip、初期バンドルから分離）。
 
 | コンポーネント | 概要 |
 |---|---|
 | [AuthScreen.tsx](src/components/AuthScreen.tsx) | ログイン/サインアップ（Supabase Auth）。未ログイン時は`App.tsx`がこれのみ表示 |
-| [HomeDashboard.tsx](src/components/HomeDashboard.tsx) | ホーム。`getListings()`で売上サマリー・最近の出品を表示（マウント時・出品後に再取得） |
-| [AnalyticsPanel.tsx](src/components/AnalyticsPanel.tsx) | `getAnalytics()`で月別出品額推移・カテゴリ別構成グラフ表示 |
+| [HomeDashboard.tsx](src/components/HomeDashboard.tsx) | ホーム。`getListings()`で売上サマリー・最近の出品を表示（マウント時・出品後に再取得）。`isLoading`中はゼロ値をそのまま出さずスケルトン表示（フラッシュ・オブ・ゼロコンテンツ防止） |
+| [AnalyticsPanel.tsx](src/components/AnalyticsPanel.tsx) | `getAnalytics()`で月別出品額推移・カテゴリ別構成グラフ表示（`React.lazy`で分析タブを開くまで未読み込み） |
 | [SettingsPanel.tsx](src/components/SettingsPanel.tsx) | `getEbayStatus()`でSandbox/Production両方の接続状態と現在の有効環境を表示。切替タブでどちらかを選択し、未接続なら「eBayでログイン」(`getEbayAuthUrl(env)`)、接続済みで非アクティブなら「切り替える」(`setActiveEbayEnv(env)`)ボタンを出し分け。モック解析トグル、ログアウトも |
 | Step1_ImageUpload〜Step4_Preview | 出品ウィザード（撮影→AI解析結果補正→価格調整→最終確認）。[StepperHeader.tsx](src/components/StepperHeader.tsx)でステップ間移動（解析結果が無いうちはStep2以降不可） |
 | [ListingDetailModal.tsx](src/components/ListingDetailModal.tsx) | 最近の出品タップで開く詳細（`getListingDetail(id)`で写真・説明文・aspects取得） |
@@ -85,13 +86,14 @@ CORSは`ALLOWED_ORIGINS`（+ localhost:5173・本番Vercel URLを常時許可）
 | [aiProvider.js](server/aiProvider.js) | `.env`の`AI_PROVIDER`(`gemini`/`groq`)で[geminiClient.js](server/geminiClient.js)/[groqClient.js](server/groqClient.js)切替。`generateJson()`/`generateImageJson()`を公開、AI呼び出しは必ずこれ経由 |
 | [analysisAgents.js](server/analysisAgents.js) | `runConditionAgent`（状態・欠陥検出）、`runMarketTrendAgent`/`runCompetitorAgent`（市場トレンド・競合比較）、`scoreListing`（LLM不使用の決定的スコア計算） |
 | [priceStats.js](server/priceStats.js) | IQR外れ値除去`removeOutliersByIQR()` |
-| [ebayAuth.js](server/ebayAuth.js) | eBay OAuth共通処理。`getEbayEnvConfig(environment)`が`'SANDBOX'`/`'PRODUCTION'`ごとのbaseUrl/authUrl/クライアントID等（`EBAY_SANDBOX_*`/`EBAY_PRODUCTION_*`）を解決し、`getAppAccessToken`/`getUserAccessToken`/`exchangeAuthCodeForTokens`/`getEbayUsername`は全て`environment`引数必須。`getUserAccessToken(userId, environment)`は`ebay_connections`のrefresh_tokenで取得（`userId`省略時`.env`の`EBAY_USER_REFRESH_TOKEN`、`setup:policies`ローカル専用、`environment`省略時`.env`の`EBAY_ENV`）。`USER_SCOPES`(出品/Policy用、refresh grantで常用)と`AUTH_SCOPES`(初回同意専用、`commerce.identity.readonly`追加)を分離—混ぜると既存接続の更新が未同意スコープエラーで壊れるため |
+| [ebayAuth.js](server/ebayAuth.js) | eBay OAuth共通処理。`getEbayEnvConfig(environment)`が`'SANDBOX'`/`'PRODUCTION'`ごとのbaseUrl/authUrl/クライアントID等（`EBAY_SANDBOX_*`/`EBAY_PRODUCTION_*`）を解決し、`getAppAccessToken`/`getUserAccessToken`/`exchangeAuthCodeForTokens`/`getEbayUsername`は全て`environment`引数必須。`getAppAccessToken`/`getUserAccessToken`は[ebayTokenCache.js](server/ebayTokenCache.js)でトークンをキャッシュし、有効期限内は再取得（ネットワーク往復）をスキップする。`getUserAccessToken(userId, environment)`は`ebay_connections`のrefresh_tokenで取得（`userId`省略時`.env`の`EBAY_USER_REFRESH_TOKEN`、`setup:policies`ローカル専用、`environment`省略時`.env`の`EBAY_ENV`）。`USER_SCOPES`(出品/Policy用、refresh grantで常用)と`AUTH_SCOPES`(初回同意専用、`commerce.identity.readonly`追加)を分離—混ぜると既存接続の更新が未同意スコープエラーで壊れるため |
 | [ebayConnectionsRepository.js](server/ebayConnectionsRepository.js) | `ebay_connections`のCRUD、全関数`environment`引数必須（1ユーザーがSandbox/Production同時接続可）。`getEbayConnection`/`getEbayRefreshToken`/`setEbayConnection`/`getAllEbayConnections`(両環境まとめて取得)/`deleteEbayConnectionsByUsername`(環境問わずusername一致で削除) |
 | [userSettingsRepository.js](server/userSettingsRepository.js) | `user_settings`のCRUD。`getActiveEbayEnv(userId)`/`setActiveEbayEnv(userId, environment)`—ユーザーが今どちらの環境で出品するかを保持（未設定時`'SANDBOX'`） |
 | [setupPolicies.js](server/setupPolicies.js) | `ensureBusinessPolicyOptIn`/`ensureFulfillmentPolicy`/`ensureReturnPolicy`/`ensureMerchantLocation`（get-or-create、全て`environment`引数必須）をまとめた`setupEbayPoliciesForToken(token, environment)`。callback自動実行の他`npm run setup:policies`でも単独動作（`.env`の`EBAY_ENV`使用、`isDirectRun`ガード） |
 | [envFile.js](server/envFile.js) | `.env`書き換え`updateEnvValue()`（`setup:policies`ローカル実行専用） |
 | [supabaseClient.js](server/supabaseClient.js) | `service_role`キー使用。未設定時`supabase`は`null`（関連機能のみスキップ、サーバーは落ちない） |
-| [listingsRepository.js](server/listingsRepository.js) | `listings`のCRUD、全関数`userId`必須・`.eq('user_id', userId)`（`saveListing`/`getRecentListings`/`getListingByListingId`/`getSalesSummary`/`getAnalytics`） |
+| [listingsRepository.js](server/listingsRepository.js) | `listings`のCRUD、全関数`userId`必須・`.eq('user_id', userId)`（`saveListing`/`getRecentListings`/`getListingByListingId`/`getSalesSummary`/`getAnalytics`）。`getRecentListings`は一覧に不要な`description`/`aspects`を除いた列のみ選択（転送量削減、詳細は`getListingByListingId`で全列取得） |
+| [ebayTokenCache.js](server/ebayTokenCache.js) | eBay app/userアクセストークンのメモリキャッシュ（`expires_in`ベース、60秒の安全マージン付き）。`/api/estimate-price`・`/api/publish-ebay`を呼ぶたびに毎回リフレッシュ通信していたのを解消（キャッシュヒット時は実測0.数ms、ミス時は約350ms） |
 | [oauthStateStore.js](server/oauthStateStore.js) | eBay OAuthの`state`用、使い捨て・10分有効期限付きのランダムnonceストア（メモリ保持）。`createOAuthState(userId, environment)`/`consumeOAuthState(nonce)`（取得と同時に削除、リプレイ不可）。予測可能な`userId:environment`を直接stateにしないためのCSRF/アカウント紐付け偽装対策 |
 | [ebayNotificationVerifier.js](server/ebayNotificationVerifier.js) | `verifyEbayNotificationSignature(body, signatureHeader)`。`x-ebay-signature`ヘッダー（base64→JSON、`{kid, signature}`）をeBayの公開鍵API（Sandbox/Production両方を試行）で検証し、削除通知の偽装を防ぐ。実装は[eBay公式Node SDK](https://github.com/eBay/event-notification-nodejs-sdk)準拠（アルゴリズムは`'ssl3-sha1'`ではなくOpenSSL 3.x/Node18+互換の`'sha1'`を使用） |
 

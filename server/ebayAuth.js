@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 import axios from 'axios';
 import { getEbayRefreshToken } from './ebayConnectionsRepository.js';
+import { getCachedAppToken, setCachedAppToken, getCachedUserToken, setCachedUserToken } from './ebayTokenCache.js';
 
 // importの評価順序に関わらず.envを確実に読み込む（index.js側のdotenv.config()より前に
 // このモジュールの初期化コードが実行され得るため）
@@ -52,6 +53,9 @@ function basicAuthHeader(environment) {
 // Browse APIなど、ユーザー認可が不要なAPI呼び出しに使用する
 // =================================================================
 export async function getAppAccessToken(environment) {
+  const cached = getCachedAppToken(environment);
+  if (cached) return cached;
+
   const { baseUrl } = getEbayEnvConfig(environment);
   const tokenResponse = await axios.post(
     `${baseUrl}/identity/v1/oauth2/token`,
@@ -64,6 +68,7 @@ export async function getAppAccessToken(environment) {
     }
   );
 
+  setCachedAppToken(environment, tokenResponse.data.access_token, tokenResponse.data.expires_in);
   return tokenResponse.data.access_token;
 }
 
@@ -75,6 +80,12 @@ export async function getAppAccessToken(environment) {
 // を使う（`npm run setup:policies`のローカル手動実行専用のフォールバック）。
 // =================================================================
 export async function getUserAccessToken(userId, environment) {
+  // userId省略時（ローカルスクリプト専用フォールバック）は呼び出し頻度が低いためキャッシュ対象外にする
+  if (userId) {
+    const cached = getCachedUserToken(userId, environment);
+    if (cached) return cached;
+  }
+
   const refreshToken = userId
     ? await getEbayRefreshToken(userId, environment)
     : process.env.EBAY_USER_REFRESH_TOKEN;
@@ -100,6 +111,9 @@ export async function getUserAccessToken(userId, environment) {
     }
   );
 
+  if (userId) {
+    setCachedUserToken(userId, environment, tokenResponse.data.access_token, tokenResponse.data.expires_in);
+  }
   return tokenResponse.data.access_token;
 }
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import type { TabType, RecentListing, SalesSummary } from './types/app';
 import type { ProductData } from './types/listing';
@@ -10,13 +10,16 @@ import Toast, { type Feedback } from './components/Toast';
 import CancelConfirmDialog from './components/CancelConfirmDialog';
 import StepperHeader from './components/StepperHeader';
 import HomeDashboard from './components/HomeDashboard';
-import AnalyticsPanel from './components/AnalyticsPanel';
 import SettingsPanel from './components/SettingsPanel';
 import Step1_ImageUpload from './components/Step1_ImageUpload';
 import Step2_MetadataEdit from './components/Step2_MetadataEdit';
 import Step3_Pricing from './components/Step3_Pricing';
 import Step4_Preview from './components/Step4_Preview';
-import ListingDetailModal from './components/ListingDetailModal';
+
+// rechartsを含み重いため、分析タブを開くまでJSを読み込まない（初期バンドルサイズ削減）
+const AnalyticsPanel = lazy(() => import('./components/AnalyticsPanel'));
+// 最近の出品をタップするまで使わないため遅延読み込みする
+const ListingDetailModal = lazy(() => import('./components/ListingDetailModal'));
 
 export default function App() {
   // アプリ自体のログインセッション（Supabase Auth）。未ログイン時はAuthScreenを表示する。
@@ -75,6 +78,9 @@ export default function App() {
     soldItemsCount: 0,
   });
   const [recentListings, setRecentListings] = useState<RecentListing[]>([]);
+  // trueの間はHomeDashboardがスケルトン表示になる（0件/$0の初期値がAPIレスポンスで
+  // 実データに差し替わる瞬間のちらつきを防ぐため）
+  const [isListingsLoading, setIsListingsLoading] = useState<boolean>(true);
 
   const refreshListings = async () => {
     try {
@@ -84,6 +90,8 @@ export default function App() {
     } catch (err) {
       // ホーム表示の初期取得失敗は致命的ではないため、トーストは出さず静かに諦める
       console.error('出品履歴の取得に失敗しました', err);
+    } finally {
+      setIsListingsLoading(false);
     }
   };
 
@@ -194,7 +202,9 @@ export default function App() {
           onConfirm={cancelListing}
         />
         {selectedListingId && (
-          <ListingDetailModal listingId={selectedListingId} onClose={() => setSelectedListingId(null)} />
+          <Suspense fallback={null}>
+            <ListingDetailModal listingId={selectedListingId} onClose={() => setSelectedListingId(null)} />
+          </Suspense>
         )}
 
         {/* ================= 出品フローモーダル表示時 ================= */}
@@ -252,11 +262,22 @@ export default function App() {
               <HomeDashboard
                 salesSummary={salesSummary}
                 recentListings={recentListings}
+                isLoading={isListingsLoading}
                 onStartListing={() => setIsListingMode(true)}
                 onSelectListing={setSelectedListingId}
               />
             )}
-            {activeTab === 'analytics' && <AnalyticsPanel />}
+            {activeTab === 'analytics' && (
+              <Suspense
+                fallback={
+                  <div className="flex justify-center py-16">
+                    <div className="animate-spin rounded-full h-8 w-8 border-4 border-blue-600 border-t-transparent" />
+                  </div>
+                }
+              >
+                <AnalyticsPanel />
+              </Suspense>
+            )}
             {activeTab === 'settings' && (
               <SettingsPanel
                 useMockAnalysis={useMockAnalysis}

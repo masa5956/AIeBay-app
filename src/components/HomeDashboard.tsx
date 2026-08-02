@@ -4,14 +4,18 @@ import type { RecentListing, SalesSummary } from '../types/app';
 interface HomeDashboardProps {
   salesSummary: SalesSummary;
   recentListings: RecentListing[];
+  isLoading: boolean;
   onStartListing: () => void;
   onSelectListing: (id: string) => void;
 }
 
-// ホームタブ: 売上ダッシュボード + 最近の出品一覧
+// ホームタブ: 売上ダッシュボード + 最近の出品一覧。
+// isLoading中は「$0」「0件」等の初期値をそのまま表示してしまうと、直後にAPIの実データへ
+// 差し替わる際にちらつく（フラッシュ・オブ・ゼロコンテンツ）ため、代わりにスケルトンを表示する。
 export default function HomeDashboard({
   salesSummary,
   recentListings,
+  isLoading,
   onStartListing,
   onSelectListing,
 }: HomeDashboardProps) {
@@ -27,37 +31,52 @@ export default function HomeDashboard({
 
       {/* 売上ダッシュボード */}
       <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 rounded-2xl p-5 text-white shadow-xl space-y-4">
-        <div className="flex justify-between items-start">
-          <div>
-            <p className="text-xs text-slate-400 font-medium">今月の売上</p>
-            <h2 className="text-3xl font-black mt-1 tracking-tight">
-              ${salesSummary.monthlyRevenue.toLocaleString()}
-            </h2>
+        {isLoading ? (
+          <div className="animate-pulse space-y-4">
+            <div className="space-y-2">
+              <div className="h-3 w-16 bg-slate-700/60 rounded" />
+              <div className="h-8 w-28 bg-slate-700/60 rounded" />
+            </div>
+            <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-700/60">
+              <div className="h-8 bg-slate-700/40 rounded" />
+              <div className="h-8 bg-slate-700/40 rounded" />
+            </div>
           </div>
-          {salesSummary.monthlyRevenueChangePercent !== null && (
-            <span
-              className={`text-[10px] font-bold px-2 py-1 rounded-full border ${
-                salesSummary.monthlyRevenueChangePercent >= 0
-                  ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
-                  : 'bg-red-500/20 text-red-400 border-red-500/30'
-              }`}
-            >
-              {salesSummary.monthlyRevenueChangePercent >= 0 ? '+' : ''}
-              {salesSummary.monthlyRevenueChangePercent.toFixed(1)}%
-            </span>
-          )}
-        </div>
+        ) : (
+          <>
+            <div className="flex justify-between items-start">
+              <div>
+                <p className="text-xs text-slate-400 font-medium">今月の売上</p>
+                <h2 className="text-3xl font-black mt-1 tracking-tight">
+                  ${salesSummary.monthlyRevenue.toLocaleString()}
+                </h2>
+              </div>
+              {salesSummary.monthlyRevenueChangePercent !== null && (
+                <span
+                  className={`text-[10px] font-bold px-2 py-1 rounded-full border ${
+                    salesSummary.monthlyRevenueChangePercent >= 0
+                      ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                      : 'bg-red-500/20 text-red-400 border-red-500/30'
+                  }`}
+                >
+                  {salesSummary.monthlyRevenueChangePercent >= 0 ? '+' : ''}
+                  {salesSummary.monthlyRevenueChangePercent.toFixed(1)}%
+                </span>
+              )}
+            </div>
 
-        <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-700/60 text-xs">
-          <div>
-            <p className="text-slate-400 text-[10px]">アクティブ出品中</p>
-            <p className="font-bold text-slate-100 mt-0.5">{salesSummary.activeListingsCount} 件</p>
-          </div>
-          <div>
-            <p className="text-slate-400 text-[10px]">累計販売実績</p>
-            <p className="font-bold text-slate-100 mt-0.5">{salesSummary.soldItemsCount} 件</p>
-          </div>
-        </div>
+            <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-700/60 text-xs">
+              <div>
+                <p className="text-slate-400 text-[10px]">アクティブ出品中</p>
+                <p className="font-bold text-slate-100 mt-0.5">{salesSummary.activeListingsCount} 件</p>
+              </div>
+              <div>
+                <p className="text-slate-400 text-[10px]">累計販売実績</p>
+                <p className="font-bold text-slate-100 mt-0.5">{salesSummary.soldItemsCount} 件</p>
+              </div>
+            </div>
+          </>
+        )}
       </div>
 
       {/* 出品メインアクションボタン */}
@@ -77,28 +96,36 @@ export default function HomeDashboard({
         </div>
 
         <div className="space-y-2">
-          {recentListings.map((item) => (
-            <button
-              key={item.id}
-              onClick={() => onSelectListing(item.id)}
-              className="w-full text-left bg-white border border-slate-200 rounded-xl p-3 flex justify-between items-center shadow-sm hover:border-blue-200 hover:shadow-md transition"
-            >
-              <div className="space-y-1 max-w-[200px]">
-                <p className="text-xs font-bold text-slate-800 truncate">{item.title}</p>
-                <p className="text-[10px] text-slate-400">{item.date}</p>
-              </div>
-              <div className="text-right">
-                <p className="text-xs font-black text-slate-900">${item.price}</p>
-                <span
-                  className={`inline-block text-[9px] font-bold px-2 py-0.5 rounded-full ${
-                    item.status === 'ACTIVE' ? 'bg-blue-50 text-blue-600' : 'bg-emerald-50 text-emerald-600'
-                  }`}
-                >
-                  {item.status}
-                </span>
-              </div>
-            </button>
-          ))}
+          {isLoading ? (
+            [0, 1, 2].map((i) => (
+              <div key={i} className="animate-pulse bg-white border border-slate-200 rounded-xl p-3 h-14" />
+            ))
+          ) : recentListings.length === 0 ? (
+            <p className="text-xs text-slate-400 text-center py-6">まだ出品がありません</p>
+          ) : (
+            recentListings.map((item) => (
+              <button
+                key={item.id}
+                onClick={() => onSelectListing(item.id)}
+                className="w-full text-left bg-white border border-slate-200 rounded-xl p-3 flex justify-between items-center shadow-sm hover:border-blue-200 hover:shadow-md transition"
+              >
+                <div className="space-y-1 max-w-[200px]">
+                  <p className="text-xs font-bold text-slate-800 truncate">{item.title}</p>
+                  <p className="text-[10px] text-slate-400">{item.date}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-xs font-black text-slate-900">${item.price}</p>
+                  <span
+                    className={`inline-block text-[9px] font-bold px-2 py-0.5 rounded-full ${
+                      item.status === 'ACTIVE' ? 'bg-blue-50 text-blue-600' : 'bg-emerald-50 text-emerald-600'
+                    }`}
+                  >
+                    {item.status}
+                  </span>
+                </div>
+              </button>
+            ))
+          )}
         </div>
       </div>
     </div>
