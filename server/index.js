@@ -35,8 +35,11 @@ dotenv.config();
 const app = express();
 
 // フロントエンドの実オリジンのみ許可する（未指定だと任意サイトからのCORSリクエストを許してしまうため）。
-// ALLOWED_ORIGINSでカンマ区切りの追加オリジンを指定可能（カスタムドメイン等を追加する場合）。
+// Vercelはブランチ・プレビューごとに別URL（https://a-ie-bay-app-git-<branch>-<team>.vercel.app等）を
+// 自動生成し事前に固定できないため、このプロジェクト名で始まる*.vercel.appドメインは正規表現で
+// まとめて許可する。ALLOWED_ORIGINSでカンマ区切りの追加オリジン（カスタムドメイン等）も指定可能。
 const DEFAULT_ALLOWED_ORIGINS = ['http://localhost:5173', 'https://a-ie-bay-app.vercel.app'];
+const VERCEL_PREVIEW_ORIGIN_PATTERN = /^https:\/\/a-ie-bay-app[a-z0-9-]*\.vercel\.app$/;
 const extraAllowedOrigins = (process.env.ALLOWED_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean);
 const allowedOrigins = new Set([...DEFAULT_ALLOWED_ORIGINS, ...extraAllowedOrigins]);
 
@@ -44,7 +47,9 @@ app.use(cors({
   origin(origin, callback) {
     // Origin未指定のリクエスト（eBayからのサーバー間呼び出しやOAuthのブラウザ遷移等）はCORSの対象外なので許可する。
     // ブラウザのfetch/XHRが送るOriginヘッダーのみを許可リストと照合する。
-    if (!origin || allowedOrigins.has(origin)) return callback(null, true);
+    if (!origin || allowedOrigins.has(origin) || VERCEL_PREVIEW_ORIGIN_PATTERN.test(origin)) {
+      return callback(null, true);
+    }
     return callback(new Error('CORSポリシーにより許可されていないオリジンです'));
   },
 }));

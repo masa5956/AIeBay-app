@@ -61,8 +61,9 @@ Vite + React18 + TS + Tailwind + `lucide-react` + `recharts`。[App.tsx](src/App
 [server/index.js](server/index.js)（Express、`npm run server`、要`.env`）。`/api/ebay/callback`と
 `/api/ebay/deletion-notification`以外は全て[server/authMiddleware.js](server/authMiddleware.js)の`requireAuth`
 （`Authorization: Bearer <Supabaseアクセストークン>`を検証し`req.userId`セット、無ければ401）を通過する。
-CORSは`ALLOWED_ORIGINS`（+ localhost:5173・本番Vercel URLを常時許可）で制限、画像アップロードは10MB上限・
-`image/*`のみ許可（multer）、HTMLレスポンスへのユーザー入力の埋め込みは`escapeHtml()`でエスケープする。
+CORSは`ALLOWED_ORIGINS`（+ localhost:5173・`https://a-ie-bay-app*.vercel.app`パターンでVercelの本番/ブランチ/
+プレビューURLを包括的に常時許可）で制限、画像アップロードは10MB上限・`image/*`のみ許可（multer）、
+HTMLレスポンスへのユーザー入力の埋め込みは`escapeHtml()`でエスケープする。
 
 | Method / Path | 概要 |
 |---|---|
