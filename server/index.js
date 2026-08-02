@@ -27,15 +27,45 @@ import { runConditionAgent, runMarketTrendAgent, runCompetitorAgent, scoreListin
 import { supabase, PRODUCT_IMAGES_BUCKET } from './supabaseClient.js';
 import { saveListing, getRecentListings, getSalesSummary, getAnalytics, getListingByListingId } from './listingsRepository.js';
 import { removeOutliersByIQR } from './priceStats.js';
+import { createOAuthState, consumeOAuthState } from './oauthStateStore.js';
+import { verifyEbayNotificationSignature } from './ebayNotificationVerifier.js';
 
 dotenv.config();
 
 const app = express();
-app.use(cors());
+
+// フロントエンドの実オリジンのみ許可する（未指定だと任意サイトからのCORSリクエストを許してしまうため）。
+// ALLOWED_ORIGINSでカンマ区切りの追加オリジンを指定可能（カスタムドメイン等を追加する場合）。
+const DEFAULT_ALLOWED_ORIGINS = ['http://localhost:5173', 'https://a-ie-bay-app.vercel.app'];
+const extraAllowedOrigins = (process.env.ALLOWED_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean);
+const allowedOrigins = new Set([...DEFAULT_ALLOWED_ORIGINS, ...extraAllowedOrigins]);
+
+app.use(cors({
+  origin(origin, callback) {
+    // Origin未指定のリクエスト（eBayからのサーバー間呼び出しやOAuthのブラウザ遷移等）はCORSの対象外なので許可する。
+    // ブラウザのfetch/XHRが送るOriginヘッダーのみを許可リストと照合する。
+    if (!origin || allowedOrigins.has(origin)) return callback(null, true);
+    return callback(new Error('CORSポリシーにより許可されていないオリジンです'));
+  },
+}));
 app.use(express.json());
 
-// 画像アップロードのメモリ保持設定
-const upload = multer({ storage: multer.memoryStorage() });
+// HTMLに埋め込む文字列をエスケープする（反射型XSS対策）
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, (ch) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]
+  ));
+}
+
+// 画像アップロードのメモリ保持設定。サイズ上限とMIMEタイプ検証でDoS・不正ファイルを防ぐ
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) return cb(null, true);
+    cb(new Error('画像ファイルのみアップロードできます。'));
+  },
+});
 
 // 撮影画像をSupabase Storageにアップロードし、eBayが取得可能な公開URLを発行する。
 // 失敗してもAI解析自体は継続させ、呼び出し元でnullをフォールバック処理させる。
@@ -465,7 +495,9 @@ app.get('/api/ebay/auth-url', requireAuth, (req, res) => {
     redirect_uri: ruName,
     response_type: 'code',
     scope: AUTH_SCOPES,
-    state: `${req.userId}:${environment}`,
+    // 予測可能な"userId:environment"ではなく、使い捨て・有効期限付きのランダムnonceをstateにする
+    // （他人のユーザーIDを知っているだけでは偽装できないようにするためのOAuth CSRF対策）
+    state: createOAuthState(req.userId, environment),
   }).toString()}`;
 
   return res.json({ url });
@@ -477,14 +509,18 @@ app.get('/api/ebay/auth-url', requireAuth, (req, res) => {
 //    （①で埋め込んだ"userId:environment"）で行う。
 app.get('/api/ebay/callback', async (req, res) => {
   const { code, error, state } = req.query;
-  const [userId, environment] = typeof state === 'string' ? state.split(':') : [];
 
   if (error || !code) {
-    return res.status(400).send(`<h1>eBay認可に失敗しました</h1><p>${error || 'codeがありません'}</p>`);
+    return res.status(400).send(`<h1>eBay認可に失敗しました</h1><p>${error ? escapeHtml(error) : 'codeがありません'}</p>`);
   }
-  if (!userId || !EBAY_ENVIRONMENTS.includes(environment)) {
-    return res.status(400).send('<h1>ユーザー情報が見つかりません</h1><p>アプリの設定タブから改めてログインし直してください。</p>');
+
+  // stateは①で発行した使い捨てnonce。ここで一度きり消費し、対応するuserId/environmentを復元する
+  // （不正・期限切れ・二重使用のnonceは復元できずnullになる）。
+  const stateEntry = typeof state === 'string' ? consumeOAuthState(state) : null;
+  if (!stateEntry || !EBAY_ENVIRONMENTS.includes(stateEntry.environment)) {
+    return res.status(400).send('<h1>セッションが無効です</h1><p>リンクの有効期限が切れたか、既に使用済みです。アプリの設定タブから改めてログインし直してください。</p>');
   }
+  const { userId, environment } = stateEntry;
 
   try {
     const tokens = await exchangeAuthCodeForTokens(code, environment);
@@ -602,8 +638,24 @@ app.get('/api/ebay/deletion-notification', (req, res) => {
 
 // ② 実際の削除通知本体。該当eBayアカウントのebay_connections行を削除し連携を解除する。
 //    eBayは非200応答やタイムアウトをリトライ対象とするため、処理の成否に関わらず速やかに200を返す。
+//    x-ebay-signatureヘッダーで真正性を検証する（未検証だと、ebay_usernameさえ知っていれば
+//    誰でも任意ユーザーのeBay連携を強制切断できてしまうため）。
+//    署名が明確に不一致/不正な場合は412で拒否するが、鍵取得自体の失敗等インフラ起因で
+//    検証できなかった場合は、本物の削除通知を取りこぼしてコンプライアンス違反になるリスクを
+//    避けるためログを残した上で処理を続行する（フェイルオープン）。
 app.post('/api/ebay/deletion-notification', async (req, res) => {
   try {
+    const { verified, reason, infraError } = await verifyEbayNotificationSignature(
+      req.body,
+      req.headers['x-ebay-signature']
+    );
+    if (!verified) {
+      console.error(`eBay削除通知の署名検証に失敗しました: ${reason}`);
+      if (!infraError) {
+        return res.status(412).json({ error: '署名検証に失敗しました。' });
+      }
+    }
+
     const username = req.body?.notification?.data?.username;
     if (username) {
       await deleteEbayConnectionsByUsername(username);
@@ -616,6 +668,14 @@ app.post('/api/ebay/deletion-notification', async (req, res) => {
     console.error('eBay削除通知の処理に失敗しました:', err);
     return res.status(200).json({ status: 'received' });
   }
+});
+
+// 画像アップロードのサイズ上限超過・非画像ファイル拒否（multer）を分かりやすいJSONで返す
+app.use((err, req, res, next) => {
+  if (err instanceof multer.MulterError || err?.message === '画像ファイルのみアップロードできます。') {
+    return res.status(400).json({ error: err.message || 'ファイルアップロードに失敗しました。' });
+  }
+  return next(err);
 });
 
 const PORT = process.env.PORT || 3001;

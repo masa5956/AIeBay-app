@@ -60,6 +60,8 @@ Vite + React18 + TS + Tailwind + `lucide-react` + `recharts`。[App.tsx](src/App
 [server/index.js](server/index.js)（Express、`npm run server`、要`.env`）。`/api/ebay/callback`と
 `/api/ebay/deletion-notification`以外は全て[server/authMiddleware.js](server/authMiddleware.js)の`requireAuth`
 （`Authorization: Bearer <Supabaseアクセストークン>`を検証し`req.userId`セット、無ければ401）を通過する。
+CORSは`ALLOWED_ORIGINS`（+ localhost:5173・本番Vercel URLを常時許可）で制限、画像アップロードは10MB上限・
+`image/*`のみ許可（multer）、HTMLレスポンスへのユーザー入力の埋め込みは`escapeHtml()`でエスケープする。
 
 | Method / Path | 概要 |
 |---|---|
@@ -69,11 +71,11 @@ Vite + React18 + TS + Tailwind + `lucide-react` + `recharts`。[App.tsx](src/App
 | `GET /api/listings` | 自分の最近の出品一覧・売上サマリー（ホーム用） |
 | `GET /api/listings/:id` | 1件分の全項目（説明文・aspects含む、詳細モーダル用） |
 | `GET /api/analytics` | 月別出品額推移（直近6ヶ月）・カテゴリ別構成 |
-| `GET /api/ebay/auth-url` | `?env=SANDBOX\|PRODUCTION`（省略時SANDBOX）でeBay同意URLを発行。`"userId:environment"`を`state`に埋め込みcallbackでの判別に使う |
-| `GET /api/ebay/callback` | eBayからのリダイレクト先（認証対象外）。`state`を`:`分割してuserId/environmentを特定、`exchangeAuthCodeForTokens`→`getEbayUsername`→`setEbayConnection`→`setActiveEbayEnv`（接続した環境に即切替）→`setupEbayPoliciesForToken()`の順で保存・自動セットアップ |
+| `GET /api/ebay/auth-url` | `?env=SANDBOX\|PRODUCTION`（省略時SANDBOX）でeBay同意URLを発行。`createOAuthState()`が発行した使い捨てnonceを`state`にする（`userId`をそのまま埋め込まない） |
+| `GET /api/ebay/callback` | eBayからのリダイレクト先（認証対象外）。`consumeOAuthState(state)`でnonceを一度きり消費しuserId/environmentを復元、`exchangeAuthCodeForTokens`→`getEbayUsername`→`setEbayConnection`→`setActiveEbayEnv`（接続した環境に即切替）→`setupEbayPoliciesForToken()`の順で保存・自動セットアップ。`error`クエリパラメータはHTMLエスケープしてから表示（反射型XSS対策） |
 | `GET /api/ebay/status` | Sandbox/Production両方の接続状態(`ebayUsername`含む)と現在の有効環境(`activeEnv`)を返す |
 | `POST /api/ebay/active-env` | 接続済みの環境へ即時切替（`{ environment }`、未接続なら400）。サーバー再起動・再デプロイ不要 |
-| `GET,POST /api/ebay/deletion-notification` | eBay Marketplace Account Deletion通知（認証対象外）。GETはchallenge_code検証、POSTは該当`ebay_username`の`ebay_connections`行を削除し連携解除 |
+| `GET,POST /api/ebay/deletion-notification` | eBay Marketplace Account Deletion通知（認証対象外）。GETはchallenge_code検証、POSTは`verifyEbayNotificationSignature()`で`x-ebay-signature`を検証した上で該当`ebay_username`の`ebay_connections`行を削除し連携解除（署名不一致は412拒否、鍵取得等のインフラ障害時はフェイルオープンでログのみ） |
 
 #### バックエンドモジュール
 
@@ -90,6 +92,8 @@ Vite + React18 + TS + Tailwind + `lucide-react` + `recharts`。[App.tsx](src/App
 | [envFile.js](server/envFile.js) | `.env`書き換え`updateEnvValue()`（`setup:policies`ローカル実行専用） |
 | [supabaseClient.js](server/supabaseClient.js) | `service_role`キー使用。未設定時`supabase`は`null`（関連機能のみスキップ、サーバーは落ちない） |
 | [listingsRepository.js](server/listingsRepository.js) | `listings`のCRUD、全関数`userId`必須・`.eq('user_id', userId)`（`saveListing`/`getRecentListings`/`getListingByListingId`/`getSalesSummary`/`getAnalytics`） |
+| [oauthStateStore.js](server/oauthStateStore.js) | eBay OAuthの`state`用、使い捨て・10分有効期限付きのランダムnonceストア（メモリ保持）。`createOAuthState(userId, environment)`/`consumeOAuthState(nonce)`（取得と同時に削除、リプレイ不可）。予測可能な`userId:environment`を直接stateにしないためのCSRF/アカウント紐付け偽装対策 |
+| [ebayNotificationVerifier.js](server/ebayNotificationVerifier.js) | `verifyEbayNotificationSignature(body, signatureHeader)`。`x-ebay-signature`ヘッダー（base64→JSON、`{kid, signature}`）をeBayの公開鍵API（Sandbox/Production両方を試行）で検証し、削除通知の偽装を防ぐ。実装は[eBay公式Node SDK](https://github.com/eBay/event-notification-nodejs-sdk)準拠（アルゴリズムは`'ssl3-sha1'`ではなくOpenSSL 3.x/Node18+互換の`'sha1'`を使用） |
 
 ### データベース（Supabase）
 
@@ -196,7 +200,7 @@ Sandbox/Productionは設定タブから即時切替可能（1ユーザーが両�
 
 | カテゴリ | 変数 |
 |---|---|
-| サーバー | `PORT` |
+| サーバー | `PORT` / `ALLOWED_ORIGINS`（CORS許可オリジンの追加、カンマ区切り。localhost:5173と本番Vercel URLは常時許可） |
 | Supabase(バックエンド) | `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` |
 | Supabase(フロントエンド、ビルド埋込) | `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` |
 | AI | `AI_PROVIDER` / `GEMINI_API_KEY` / `GEMINI_MODEL` / `GROQ_API_KEY` / `GROQ_MODEL` |
@@ -216,7 +220,17 @@ Node.js/Express + Gemini（`@google/genai`、Groq切替可）。エンドポイ�
 - 総合判定スコアはAI解析直後の一時点スナップショット。価格を後から調整してもリアルタイム再計算はしない。
 - 出荷元住所はアプリ全体で共有の単一設定（Business Policies自体はユーザーごとのeBayアカウントに個別作成）。
 - **売上実績の追跡なし**: `listings`の「売却済み(SOLD)」への更新機構が無く全出品ACTIVEのまま記録され続けるため、`totalRevenue`/`monthlyRevenue`/`soldItemsCount`は常に0、月次売上バッジも非表示のまま。実運用にはeBay売却通知（Webhook等）受信の仕組みが必要。
-- **商品画像**: アップロード失敗時・モックモード時は`blob:`にフォールバックし、`/api/publish-ebay`側でプレースホルダー画像に強制差し替える暫定対応あり。
+- **商品画像**: アップロード失敗時・モックモード時（`useMockAnalysis`ON、AI呼び出しをスキップしダミーデータで代用する開発者向けトグル）は`blob:`にフォールバックし、`/api/publish-ebay`側でプレースホルダー画像（`https://placehold.co/500x500.png`）に強制差し替える暫定対応あり。
 - `categoryId`は仮の固定値(`112529`)。実運用にはTaxonomy API等での適切なカテゴリ判定が必要。
 - **AI APIクォータ**: 画像1枚あたり最大4回のAI呼び出し（基本抽出・状態・市場トレンド・競合比較）が発生し無料枠の制限に達しやすい。Gemini→Groq切替は`aiProvider.js`参照。
 - Sandbox出品テスト・Application Growth Check(AGC)申請（本番呼び出し上限引き上げ）は未着手。eBay Developer Portal上でユーザー自身が行う必要がある。
+
+## セキュリティ対策
+
+- **CORS**: `ALLOWED_ORIGINS`（+ localhost:5173・本番Vercel URL）以外のオリジンからのfetch/XHRは拒否。
+- **XSS対策**: `/api/ebay/callback`のエラーメッセージ等、ユーザー入力由来の値をHTMLに埋め込む箇所は`escapeHtml()`で必ずエスケープする。
+- **OAuth CSRF対策**: `state`パラメータは`oauthStateStore.js`が発行する使い捨て・10分有効期限のランダムnonce（`userId`を直接含めない）。他人のSupabaseユーザーIDを知っているだけではアカウントを紐付けられない。
+- **削除通知の真正性検証**: `POST /api/ebay/deletion-notification`は`ebayNotificationVerifier.js`で`x-ebay-signature`ヘッダーを検証し、eBay以外からの偽装リクエストで他人のeBay連携を強制切断されないようにする。
+- **アップロード制限**: 画像アップロードは10MB上限・`image/*`のみ許可（multer）。
+- **認証・データ分離**: 全APIは`requireAuth`でSupabaseアクセストークンを検証し`req.userId`をセット、DBアクセスは全て`user_id`（`ebay_connections`は`user_id, environment`）でスコープする。RLSは有効化済みだがバックエンドは`service_role`で常時バイパスする設計のため、実質的なアクセス制御はアプリケーション層のこのスコープ処理が担う。
+- **秘密情報**: `.env`はgit管理対象外、service_role/クライアントシークレット等はフロントエンドに一切渡さない。
