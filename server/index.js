@@ -22,7 +22,7 @@ import {
 import { getActiveEbayEnv, setActiveEbayEnv } from './userSettingsRepository.js';
 import { setupEbayPoliciesForToken } from './setupPolicies.js';
 import { requireAuth } from './authMiddleware.js';
-import { AI_PROVIDER, generateImageJson } from './aiProvider.js';
+import { AI_PROVIDER, TEXT_AI_PROVIDER, generateImageJson } from './aiProvider.js';
 import { runConditionAgent, runMarketResearchAgent, runMarketTrendAgent, runCompetitorAgent, scoreListing } from './analysisAgents.js';
 import { supabase, PRODUCT_IMAGES_BUCKET } from './supabaseClient.js';
 import { saveListing, getRecentListings, getSalesSummary, getAnalytics, getListingByListingId } from './listingsRepository.js';
@@ -204,15 +204,20 @@ app.post('/api/estimate-price', requireAuth, async (req, res) => {
     let suggested_price = 0;
     let marketTrend;
     let competitorSuggestions;
-    try {
-      const research = await runMarketResearchAgent({ title: keywords, brand, model, condition, conditionAssessment });
-      min_price = Number(research.min_price) || 0;
-      max_price = Number(research.max_price) || 0;
-      suggested_price = Number(research.suggested_price) || 0;
-      marketTrend = research.market_trend;
-      competitorSuggestions = research.competitor_suggestions;
-    } catch (researchError) {
-      console.error('Gemini検索による価格調査に失敗しました。eBay Browse APIへフォールバックします:', researchError?.response?.data || researchError);
+    // Google検索グラウンディングはGemini専用機能のため、TEXT_AI_PROVIDER=groq（Geminiのクォータ
+    // 枯渇時などにテキスト系エージェントを丸ごとGroqへ逃がす設定）のときはこの呼び出し自体を
+    // スキップする。呼んでも確実に失敗するだけで、無駄な待ち時間とクォータ消費が発生するため。
+    if (TEXT_AI_PROVIDER !== 'groq') {
+      try {
+        const research = await runMarketResearchAgent({ title: keywords, brand, model, condition, conditionAssessment });
+        min_price = Number(research.min_price) || 0;
+        max_price = Number(research.max_price) || 0;
+        suggested_price = Number(research.suggested_price) || 0;
+        marketTrend = research.market_trend;
+        competitorSuggestions = research.competitor_suggestions;
+      } catch (researchError) {
+        console.error('Gemini検索による価格調査に失敗しました。eBay Browse APIへフォールバックします:', researchError?.response?.data || researchError);
+      }
     }
 
     // フォールバック: Gemini検索調査が失敗した、または有効な価格を返さなかった場合のみ、
