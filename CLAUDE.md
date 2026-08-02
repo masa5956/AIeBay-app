@@ -39,7 +39,7 @@ Vite + React18 + TS + Tailwind + `lucide-react` + `recharts`。[App.tsx](src/App
 | [HomeDashboard.tsx](src/components/HomeDashboard.tsx) | ホーム。`getListings()`で売上サマリー・最近の出品を表示（マウント時・出品後に再取得）。`isLoading`中はゼロ値をそのまま出さずスケルトン表示（フラッシュ・オブ・ゼロコンテンツ防止） |
 | [AnalyticsPanel.tsx](src/components/AnalyticsPanel.tsx) | `getAnalytics()`で月別出品額推移・カテゴリ別構成グラフ表示（`React.lazy`で分析タブを開くまで未読み込み） |
 | [SettingsPanel.tsx](src/components/SettingsPanel.tsx) | `getEbayStatus()`でSandbox/Production両方の接続状態と現在の有効環境を表示。切替タブでどちらかを選択し、未接続なら「eBayでログイン」(`getEbayAuthUrl(env)`)、接続済みで非アクティブなら「切り替える」(`setActiveEbayEnv(env)`)ボタンを出し分け。モック解析トグル、ログアウトも |
-| Step1_ImageUpload〜Step4_Preview | 出品ウィザード（撮影→AI解析結果補正→価格調整→最終確認）。写真は複数枚（最大8枚、`App.tsx`の`MAX_PHOTOS`）選択可能で、Step2の「追加」ボタンから撮影済みの元ファイル一式(`selectedFiles`)に追加し全画像で再解析する（`App.tsx`の`runAnalysis()`）。[StepperHeader.tsx](src/components/StepperHeader.tsx)でステップ間移動（解析結果が無いうちはStep2以降不可） |
+| Step1_ImageUpload〜Step4_Preview | 出品ウィザード（撮影→AI解析結果補正→価格調整→最終確認）。写真は複数枚（最大8枚、`App.tsx`の`MAX_PHOTOS`）選択可能。Step1は選択直後にAI解析を始めず、サムネイル確認・個別削除（×）・追加ができる中間状態を挟んでから「この写真で解析する」ボタンで`onConfirm(files)`を呼ぶ（誤った写真のまま解析してしまうのを防ぐため）。Step2の「追加」ボタンからも撮影済みの元ファイル一式(`selectedFiles`)に追加し全画像で再解析する（`App.tsx`の`runAnalysis()`）。[StepperHeader.tsx](src/components/StepperHeader.tsx)でステップ間移動（解析結果が無いうちはStep2以降不可） |
 | [ListingDetailModal.tsx](src/components/ListingDetailModal.tsx) | 最近の出品タップで開く詳細（`getListingDetail(id)`で写真・説明文・aspects取得） |
 | [Toast.tsx](src/components/Toast.tsx) / [CancelConfirmDialog.tsx](src/components/CancelConfirmDialog.tsx) | 完了・失敗通知 / 出品キャンセル確認 |
 | [BottomNav.tsx](src/components/BottomNav.tsx) | ホーム/分析/設定タブ切替 |

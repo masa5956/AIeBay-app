@@ -123,14 +123,6 @@ export default function App() {
     }
   };
 
-  // Step1: 初回の撮影・アップロード
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []).slice(0, MAX_PHOTOS);
-    e.target.value = ''; // 同じファイルを連続選択しても onChange が発火するようにリセット
-    if (files.length === 0) return;
-    runAnalysis(files);
-  };
-
   // Step2: 「追加で撮影/アップロードする」— 既存の写真に追加し、全画像で再解析する
   const handleAddPhotos = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newFiles = Array.from(e.target.files || []);
@@ -257,7 +249,7 @@ export default function App() {
               </div>
             )}
 
-            {!isLoading && step === 1 && <Step1_ImageUpload onUpload={handleImageUpload} />}
+            {!isLoading && step === 1 && <Step1_ImageUpload onConfirm={runAnalysis} maxPhotos={MAX_PHOTOS} />}
 
             {!isLoading && step === 2 && productData && (
               <Step2_MetadataEdit
