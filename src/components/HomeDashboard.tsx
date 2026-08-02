@@ -20,11 +20,8 @@ export default function HomeDashboard({
       {/* アプリヘッダー */}
       <div className="flex justify-between items-center pt-2">
         <div>
-          <p className="text-xs font-semibold text-slate-400">おかえりなさい</p>
+          <p className="text-xs font-semibold text-slate-400">ようこそ</p>
           <h1 className="text-lg font-black text-slate-800">eBay AI Lister</h1>
-        </div>
-        <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center text-white font-bold text-xs shadow-md shadow-blue-500/30">
-          US
         </div>
       </div>
 

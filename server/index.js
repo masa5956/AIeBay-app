@@ -3,15 +3,17 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import multer from 'multer';
 import axios from 'axios';
+import crypto from 'node:crypto';
 import {
   EBAY_BASE_URL,
   EBAY_AUTH_URL,
-  USER_SCOPES,
+  AUTH_SCOPES,
   getAppAccessToken,
   getUserAccessToken,
   exchangeAuthCodeForTokens,
+  getEbayUsername,
 } from './ebayAuth.js';
-import { getEbayConnection, setEbayConnection } from './ebayConnectionsRepository.js';
+import { getEbayConnection, setEbayConnection, deleteEbayConnectionsByUsername } from './ebayConnectionsRepository.js';
 import { setupEbayPoliciesForToken } from './setupPolicies.js';
 import { requireAuth } from './authMiddleware.js';
 import { AI_PROVIDER, generateImageJson } from './aiProvider.js';
@@ -447,7 +449,7 @@ app.get('/api/ebay/auth-url', requireAuth, (req, res) => {
     client_id: process.env.EBAY_CLIENT_ID,
     redirect_uri: process.env.EBAY_RU_NAME,
     response_type: 'code',
-    scope: USER_SCOPES,
+    scope: AUTH_SCOPES,
     state: req.userId,
   }).toString()}`;
 
@@ -471,10 +473,20 @@ app.get('/api/ebay/callback', async (req, res) => {
   try {
     const tokens = await exchangeAuthCodeForTokens(code);
 
+    // アカウント削除通知（username付きで届く）との突合用に、同意直後のaccess_token
+    // （AUTH_SCOPESでcommerce.identity.readonlyまで同意済み）でeBayユーザー名を取得しておく。
+    // 取得失敗はログイン自体をブロックしない（ebay_usernameがnullのままになるだけ）。
+    let ebayUsername = null;
+    try {
+      ebayUsername = await getEbayUsername(tokens.access_token);
+    } catch (identityErr) {
+      console.error('eBayユーザー名の取得に失敗しました:', identityErr?.response?.data || identityErr);
+    }
+
     // Supabaseのebay_connectionsにrefresh_tokenを先に保存する（Renderのような永続ディスクの無い
     // 環境でも再起動・再デプロイをまたいでログイン状態を維持できる、アプリ内ログインの本体）。
     // Business Policy自動セットアップが失敗しても、ログイン自体は必ず成功させる。
-    await setEbayConnection(userId, { refreshToken: tokens.refresh_token });
+    await setEbayConnection(userId, { refreshToken: tokens.refresh_token, ebayUsername });
 
     // Business Policies・出荷元ロケーションをこのeBayアカウントに対して自動セットアップ
     // （get-or-createのため、既存アカウントの再ログインでも安全に何度でも実行できる）。
@@ -507,6 +519,53 @@ app.get('/api/ebay/status', requireAuth, async (req, res) => {
   } catch (error) {
     console.error('eBay接続状態の確認に失敗しました:', error);
     return res.status(500).json({ error: 'eBay接続状態の確認に失敗しました。' });
+  }
+});
+
+// =================================================================
+// 5. eBay Marketplace Account Deletion/Closure通知（コンプライアンス対応）
+//    eBay Developer Portalの「Notifications」設定で、このエンドポイントのURLと
+//    EBAY_DELETION_VERIFICATION_TOKENを登録すると、ユーザーがeBayアカウントを削除・閉鎖した際に
+//    eBayから通知が届く。受信したら該当するebay_connectionsの行を削除し連携を確実に解除する。
+//    どちらも認証必須(requireAuth)の対象外（eBay側からの素のサーバー間呼び出しのため）。
+// =================================================================
+
+// ① Developer Portalへの登録時、まずchallenge_code付きのGETで疎通確認が来る。
+//    sha256(challengeCode + verificationToken + このエンドポイントの完全なURL)を返す必要がある。
+app.get('/api/ebay/deletion-notification', (req, res) => {
+  const { challenge_code: challengeCode } = req.query;
+  const verificationToken = process.env.EBAY_DELETION_VERIFICATION_TOKEN;
+  const endpointUrl = process.env.EBAY_DELETION_ENDPOINT_URL;
+
+  if (!challengeCode || !verificationToken || !endpointUrl) {
+    return res.status(400).json({
+      error: 'challenge_codeクエリパラメータ、またはEBAY_DELETION_VERIFICATION_TOKEN / EBAY_DELETION_ENDPOINT_URLの設定が不足しています。',
+    });
+  }
+
+  const hash = crypto.createHash('sha256');
+  hash.update(challengeCode);
+  hash.update(verificationToken);
+  hash.update(endpointUrl);
+
+  return res.status(200).json({ challengeResponse: hash.digest('hex') });
+});
+
+// ② 実際の削除通知本体。該当eBayアカウントのebay_connections行を削除し連携を解除する。
+//    eBayは非200応答やタイムアウトをリトライ対象とするため、処理の成否に関わらず速やかに200を返す。
+app.post('/api/ebay/deletion-notification', async (req, res) => {
+  try {
+    const username = req.body?.notification?.data?.username;
+    if (username) {
+      await deleteEbayConnectionsByUsername(username);
+      console.log(`eBayアカウント削除通知を受信し、連携を解除しました: ${username}`);
+    } else {
+      console.warn('eBay削除通知にusernameが含まれていませんでした:', JSON.stringify(req.body));
+    }
+    return res.status(200).json({ status: 'received' });
+  } catch (err) {
+    console.error('eBay削除通知の処理に失敗しました:', err);
+    return res.status(200).json({ status: 'received' });
   }
 });
 
