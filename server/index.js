@@ -203,25 +203,46 @@ app.post('/api/estimate-price', requireAuth, async (req, res) => {
     const { baseUrl } = getEbayEnvConfig(priceResearchEnv);
     const appToken = await getAppAccessToken(priceResearchEnv);
 
-    // Browse API による同一・類似商品の価格検索
-    const searchResponse = await axios.get(
-      `${baseUrl}/buy/browse/v1/item_summary/search`,
-      {
-        headers: {
-          Authorization: `Bearer ${appToken}`,
-          'X-EBAY-C-MARKETPLACE-ID': 'EBAY_US',
-        },
-        params: {
-          q: keywords,
-          limit: 50,
-          filter: condition && CONDITION_INFO[condition]
-            ? `buyingOptions:{FIXED_PRICE},conditionIds:{${CONDITION_INFO[condition].id}}`
-            : 'buyingOptions:{FIXED_PRICE}',
-        },
-      }
+    // Browse API の`q`はAIが生成した長いSEOタイトルそのままだと、ブランド・型番をAIが誤認識/
+    // 一般化した場合（例: "Unbranded"寄りの表現）に0件になりやすい。0件のときは段階的に検索語を
+    // 単純化して再検索する（brand+model → タイトル先頭の数語）。再検索は0件だった場合のみ発生する
+    // ため、通常ケースのレイテンシには影響しない。
+    const brand = (productDraft?.aspects || []).find((a) => a.key === 'Brand')?.value || '';
+    const model = (productDraft?.aspects || []).find((a) => a.key === 'Model')?.value || '';
+    const brandModel = `${brand} ${model}`.trim();
+    const shortTitle = keywords.split(/\s+/).slice(0, 4).join(' ');
+    const candidateQueries = [keywords, brandModel, shortTitle].filter(
+      (q, i, arr) => q && arr.indexOf(q) === i // 空文字・重複を除去
     );
 
-    const items = searchResponse.data.itemSummaries || [];
+    let items = [];
+    let usedQuery = keywords;
+    for (const q of candidateQueries) {
+      const searchResponse = await axios.get(
+        `${baseUrl}/buy/browse/v1/item_summary/search`,
+        {
+          headers: {
+            Authorization: `Bearer ${appToken}`,
+            'X-EBAY-C-MARKETPLACE-ID': 'EBAY_US',
+          },
+          params: {
+            q,
+            limit: 50,
+            filter: condition && CONDITION_INFO[condition]
+              ? `buyingOptions:{FIXED_PRICE},conditionIds:{${CONDITION_INFO[condition].id}}`
+              : 'buyingOptions:{FIXED_PRICE}',
+          },
+        }
+      );
+      items = searchResponse.data.itemSummaries || [];
+      usedQuery = q;
+      if (items.length > 0) break;
+    }
+    if (items.length === 0) {
+      console.warn(`価格調査: 検索語を段階的に変えても0件でした（試行順: ${candidateQueries.join(' / ')}）`);
+    } else if (usedQuery !== keywords) {
+      console.log(`価格調査: 元のキーワードでは0件のため"${usedQuery}"で再検索し${items.length}件ヒットしました`);
+    }
     const prices = items
       .map((item) => parseFloat(item.price?.value || '0'))
       .filter((p) => p > 0)
