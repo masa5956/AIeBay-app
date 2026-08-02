@@ -240,11 +240,11 @@ app.post('/api/publish-ebay', requireAuth, async (req, res) => {
     const VALID_CONDITIONS = ['NEW', 'USED_EXCELLENT', 'USED_GOOD', 'USED_FAIR'];
     const condition = VALID_CONDITIONS.includes(productData.condition) ? productData.condition : 'USED_EXCELLENT';
 
-    // NOTE: 画像ホスティング未実装のため、フロントエンドが送ってくるblob:はeBayから取得不可。
-    // http(s)で始まらないURLはプレースホルダー画像にフォールバックする（暫定対応）。
+    // フロントエンドが送ってくるblob:（Supabaseアップロード失敗時のフォールバック等）は
+    // eBayから取得不可なため、http(s)で始まらないURLはプレースホルダー画像にフォールバックする。
     const imageUrl = typeof productData.imageUrl === 'string' && productData.imageUrl.startsWith('http')
       ? productData.imageUrl
-      : 'https://via.placeholder.com/500';
+      : 'https://placehold.co/500x500.png?text=No+Image';
 
     // Step2で確認・編集された商品仕様(Item Specifics)一覧をeBayのaspects形式に変換
     // eBayの商品仕様(Item Specifics)は1つの仕様名に複数の値を持てる仕様のため、

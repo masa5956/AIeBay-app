@@ -18,6 +18,8 @@ export default function SettingsPanel({ useMockAnalysis, onToggleMockAnalysis, o
   const [isConnecting, setIsConnecting] = useState(false);
   const [isSwitching, setIsSwitching] = useState(false);
   const [actionError, setActionError] = useState('');
+  // タブをタップしただけで切り替わってしまう誤操作を防ぐため、実際の切替前に確認を挟む
+  const [confirmingSwitchEnv, setConfirmingSwitchEnv] = useState<EbayEnvironment | null>(null);
 
   const refreshStatus = () => {
     getEbayStatus().then((data) => {
@@ -58,11 +60,12 @@ export default function SettingsPanel({ useMockAnalysis, onToggleMockAnalysis, o
     }
   };
 
-  const handleSwitchEnv = async () => {
+  const handleSwitchEnv = async (environment: EbayEnvironment) => {
+    setConfirmingSwitchEnv(null);
     setIsSwitching(true);
     setActionError('');
     try {
-      await setActiveEbayEnv(selectedEnv);
+      await setActiveEbayEnv(environment);
       refreshStatus();
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'eBay環境の切替に失敗しました');
@@ -118,7 +121,7 @@ export default function SettingsPanel({ useMockAnalysis, onToggleMockAnalysis, o
 
           {selectedInfo?.connected && !isActiveEnv && (
             <button
-              onClick={handleSwitchEnv}
+              onClick={() => setConfirmingSwitchEnv(selectedEnv)}
               disabled={isSwitching}
               className="w-full bg-emerald-600 text-white font-bold py-2.5 rounded-lg hover:bg-emerald-700 transition disabled:opacity-50"
             >
@@ -179,6 +182,33 @@ export default function SettingsPanel({ useMockAnalysis, onToggleMockAnalysis, o
       >
         ログアウト
       </button>
+
+      {confirmingSwitchEnv && (
+        <div className="absolute inset-0 z-50 bg-black/40 flex items-center justify-center p-6">
+          <div className="bg-white rounded-xl p-5 w-full max-w-xs space-y-4 shadow-xl text-center">
+            <p className="text-sm font-bold text-slate-700">
+              出品先を{ENV_LABEL[confirmingSwitchEnv]}に切り替えますか？
+            </p>
+            <p className="text-xs text-slate-400">
+              以後、出品・価格調査は{ENV_LABEL[confirmingSwitchEnv]}環境のeBayアカウントに対して行われます。
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setConfirmingSwitchEnv(null)}
+                className="w-1/2 border py-2 rounded-lg text-xs font-bold text-slate-600"
+              >
+                キャンセル
+              </button>
+              <button
+                onClick={() => handleSwitchEnv(confirmingSwitchEnv)}
+                className="w-1/2 bg-emerald-600 text-white py-2 rounded-lg text-xs font-bold"
+              >
+                切り替える
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
