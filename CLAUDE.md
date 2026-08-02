@@ -178,7 +178,7 @@ Sandbox/Production are switchable instantly from the Settings tab (one user can 
 - **No sold-item tracking**: nothing marks a `listings` row `SOLD`, so `totalRevenue`/`monthlyRevenue`/`soldItemsCount` stay 0 and the monthly-change badge stays hidden. Would need an eBay sale-notification webhook.
 - **Images**: failed upload or mock mode (`useMockAnalysis` dev toggle) falls back to a `blob:` URL client-side; `/api/publish-ebay` swaps any non-http(s) URL for a placeholder (`https://placehold.co/500x500.png`).
 - `categoryId` is a hardcoded placeholder (`112529`); real use needs Taxonomy API-based category detection.
-- **AI quota**: up to 4 AI calls per photo set (extraction, condition, market-trend, competitor) — hits free-tier limits fast. `TEXT_AI_PROVIDER=groq` halves Gemini's share; see `aiProvider.js`.
+- **AI quota**: up to 4 AI calls per photo set (extraction, condition, market-trend, competitor) — hits free-tier limits fast. `TEXT_AI_PROVIDER=groq` halves Gemini's share; see `aiProvider.js`. To escape Gemini entirely, `AI_PROVIDER=groq` + `GROQ_MODEL=qwen/qwen3.6-27b` also works for vision (confirmed working via direct API test — Groq's model list changes often, so re-verify before relying on a specific name). This is a reasoning model that prefixes output with `<think>...</think>`; [groqClient.js](server/groqClient.js)'s `parseJsonLoose()` strips that block before extracting JSON — without it, a stray `{...}` example inside the thinking text confuses the naive greedy-regex JSON extraction and parsing fails.
 - Sandbox listing tests and Application Growth Check (AGC, raises prod call limits) haven't been done — both require the user's own action in Developer Portal.
 
 ## Security
