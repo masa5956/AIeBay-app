@@ -50,7 +50,7 @@ export default function Step3_Pricing({ productData, onChange, onBack, onNext }:
               pricing: { ...productData.pricing, suggestedPrice: parseFloat(e.target.value) || 0 },
             })
           }
-          className="w-full border border-slate-200 p-2 rounded-lg text-sm mt-1 font-bold"
+          className="w-full border border-slate-200 p-2 rounded-lg text-base mt-1 font-bold"
         />
       </div>
 

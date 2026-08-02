@@ -2,6 +2,19 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer base {
+  html {
+    /* iOSで画面回転時に文字サイズが自動拡大されるのを防ぐ */
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    /* 意図しない横スクロールが発生するのを防ぐ保険 */
+    overflow-x: hidden;
+    /* iOS Safariでボタン等タップ時に出る灰色フラッシュを消し、ネイティブアプリに近い見た目にする */
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
 @keyframes fadeIn {
   from {
     opacity: 0;

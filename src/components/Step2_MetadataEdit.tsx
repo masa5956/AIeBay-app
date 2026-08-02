@@ -58,7 +58,7 @@ export default function Step2_MetadataEdit({
           value={productData.title}
           maxLength={80}
           onChange={(e) => onChange({ ...productData, title: e.target.value })}
-          className="w-full border border-slate-200 p-2 rounded-lg text-sm mt-1 focus:ring-2 focus:ring-blue-500 outline-none"
+          className="w-full border border-slate-200 p-2 rounded-lg text-base mt-1 focus:ring-2 focus:ring-blue-500 outline-none"
         />
         <span className="text-[10px] text-slate-400 block text-right">{productData.title.length}/80文字</span>
       </div>
@@ -70,7 +70,7 @@ export default function Step2_MetadataEdit({
             type="text"
             value={productData.brand}
             onChange={(e) => onChange({ ...productData, brand: e.target.value })}
-            className="w-full border border-slate-200 p-2 rounded-lg text-sm mt-1"
+            className="w-full border border-slate-200 p-2 rounded-lg text-base mt-1"
           />
         </div>
         <div>
@@ -79,7 +79,7 @@ export default function Step2_MetadataEdit({
             type="text"
             value={productData.model}
             onChange={(e) => onChange({ ...productData, model: e.target.value })}
-            className="w-full border border-slate-200 p-2 rounded-lg text-sm mt-1"
+            className="w-full border border-slate-200 p-2 rounded-lg text-base mt-1"
           />
         </div>
       </div>
@@ -90,7 +90,7 @@ export default function Step2_MetadataEdit({
           value={productData.description}
           onChange={(e) => onChange({ ...productData, description: e.target.value })}
           rows={8}
-          className="w-full border border-slate-200 p-2 rounded-lg text-sm mt-1 focus:ring-2 focus:ring-blue-500 outline-none resize-none"
+          className="w-full border border-slate-200 p-2 rounded-lg text-base mt-1 focus:ring-2 focus:ring-blue-500 outline-none resize-none"
         />
       </div>
 
@@ -106,7 +106,7 @@ export default function Step2_MetadataEdit({
                   type="text"
                   value={aspect.value}
                   onChange={(e) => onUpdateAspect(i + 2, e.target.value)}
-                  className="w-full border border-slate-200 p-2 rounded-lg text-sm mt-1"
+                  className="w-full border border-slate-200 p-2 rounded-lg text-base mt-1"
                 />
               </div>
             ))}

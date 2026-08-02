@@ -167,7 +167,7 @@ export default function App() {
   // 真っ白な画面のまま原因が分からなくなるのを防ぐため、明確な案内を表示する。
   if (!isSupabaseConfigured) {
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-6">
+      <div className="min-h-screen min-h-dvh bg-slate-900 flex items-center justify-center p-6">
         <div className="bg-white rounded-xl p-5 max-w-sm text-center space-y-2">
           <p className="text-sm font-bold text-red-600">アプリの設定が未完了です</p>
           <p className="text-xs text-slate-500">
@@ -181,7 +181,7 @@ export default function App() {
 
   if (authLoading) {
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+      <div className="min-h-screen min-h-dvh bg-slate-900 flex items-center justify-center">
         <div className="animate-spin rounded-full h-10 w-10 border-4 border-blue-600 border-t-transparent"></div>
       </div>
     );
@@ -192,9 +192,9 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col items-center">
+    <div className="min-h-screen min-h-dvh bg-slate-900 text-slate-100 flex flex-col items-center">
       {/* スマホ画面枠 */}
-      <div className="w-full max-w-md bg-slate-50 text-slate-800 min-h-screen flex flex-col justify-between relative shadow-2xl pb-20">
+      <div className="w-full max-w-md bg-slate-50 text-slate-800 min-h-screen min-h-dvh flex flex-col justify-between relative shadow-2xl pb-20">
         <Toast feedback={feedback} onClose={() => setFeedback(null)} />
         <CancelConfirmDialog
           open={isCancelConfirmOpen}

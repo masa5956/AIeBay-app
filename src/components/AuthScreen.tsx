@@ -33,8 +33,8 @@ export default function AuthScreen() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col items-center justify-center">
-      <div className="w-full max-w-md bg-slate-50 text-slate-800 min-h-screen flex flex-col justify-center shadow-2xl px-6">
+    <div className="min-h-screen min-h-dvh bg-slate-900 text-slate-100 flex flex-col items-center justify-center">
+      <div className="w-full max-w-md bg-slate-50 text-slate-800 min-h-screen min-h-dvh flex flex-col justify-center shadow-2xl px-6">
         <div className="space-y-6">
           <div className="text-center space-y-1">
             <h1 className="text-2xl font-black text-slate-800">eBay AI Lister</h1>
@@ -66,7 +66,7 @@ export default function AuthScreen() {
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full border border-slate-200 p-2.5 rounded-lg text-sm mt-1 focus:ring-2 focus:ring-blue-500 outline-none"
+                  className="w-full border border-slate-200 p-2.5 rounded-lg text-base mt-1 focus:ring-2 focus:ring-blue-500 outline-none"
                 />
               </div>
               <div>
@@ -77,7 +77,7 @@ export default function AuthScreen() {
                   minLength={6}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full border border-slate-200 p-2.5 rounded-lg text-sm mt-1 focus:ring-2 focus:ring-blue-500 outline-none"
+                  className="w-full border border-slate-200 p-2.5 rounded-lg text-base mt-1 focus:ring-2 focus:ring-blue-500 outline-none"
                 />
               </div>
 
