@@ -1,106 +1,88 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code when working in this repo. Written in English for token efficiency; you must still always reply to the user in Japanese (see below).
 
-## 言語設定
-常に日本語で会話・コメント・エラー説明・ドキュメントを記述する。
+## Language rule
+常に日本語で会話・コメント・エラー説明・ドキュメントを記述する。(Always respond, comment, and write docs in Japanese — this rule itself stays in Japanese since it defines that policy; the rest of this file is English purely to save tokens.)
 
-## プロジェクト概要
+## Overview
 
-eBay向けAI自動出品ツール。スマホ画面風のReact SPAで、商品写真をGemini/Groq(Vision)が解析し、複数AIエージェント
-（市場トレンド・競合比較・商品状態分析）を経てeBayに出品するウィザードUIを提供する。**Supabase Auth（メール+
-パスワード）のアプリ独自アカウントでログインし、出品履歴・売上・接続eBayアカウントはユーザーごとに分離される**
-（マルチユーザー対応）。詳細要件は[PROJECT_REQUIREMENTS.md](PROJECT_REQUIREMENTS.md)（実装との差異は末尾参照）。
+eBay AI auto-listing tool. Phone-style React SPA: user photographs a product, Gemini/Groq (vision) extracts listing data, multiple AI agents (market trend, competitor comparison, condition) analyze it, then a wizard publishes to eBay. **Multi-user**: app has its own Supabase Auth (email+password) accounts; listings, sales, and connected eBay accounts are isolated per user. Full spec: [PROJECT_REQUIREMENTS.md](PROJECT_REQUIREMENTS.md) (implementation differs — see bottom).
 
-## よく使うコマンド
+## Commands
 
 ```bash
-npm run dev            # Vite開発サーバー（フロントエンドのみ）
-npm run server         # server/index.js のExpressバックエンド（要.env、別ターミナル）
-npm run build          # tsc → vite build
-npm run preview        # ビルド済みアプリをローカルプレビュー
-npm run lint           # oxlint
-npm run setup:policies # eBay Business Policies・出荷元ロケーションの初回セットアップ
+npm run dev            # Vite dev server (frontend only)
+npm run server         # Express backend (server/index.js), needs .env, separate terminal
+npm run build           # tsc → vite build
+npm run preview         # preview production build locally
+npm run lint            # oxlint
+npm run setup:policies  # one-time eBay Business Policies / location setup
 ```
 
-`dev`と`server`を両方起動して初めて出品フローが動作する。テストは未設定。
+Need both `dev` and `server` running for the listing flow to work. No test framework configured.
 
-## アーキテクチャ
+## Architecture
 
-### フロントエンド
+### Frontend
 
-Vite + React18 + TS + Tailwind + `lucide-react` + `recharts`。[App.tsx](src/App.tsx)は状態管理と画面組み立てのみの
-薄いシェルで、各画面は[src/components/](src/components/)に分割。`AnalyticsPanel`/`ListingDetailModal`は
-`React.lazy`で遅延読み込み（recharts依存の`AnalyticsPanel`だけで約100KB gzip、初期バンドルから分離）。
+Vite + React18 + TS + Tailwind + `lucide-react` + `recharts`. [App.tsx](src/App.tsx) is a thin shell (state + composition); screens live in [src/components/](src/components/). `AnalyticsPanel`/`ListingDetailModal` are `React.lazy`-loaded (recharts alone is ~100KB gzip, kept out of the initial bundle).
 
-| コンポーネント | 概要 |
+| Component | Notes |
 |---|---|
-| [AuthScreen.tsx](src/components/AuthScreen.tsx) | ログイン/サインアップ（Supabase Auth）。未ログイン時は`App.tsx`がこれのみ表示 |
-| [HomeDashboard.tsx](src/components/HomeDashboard.tsx) | ホーム。`getListings()`で売上サマリー・最近の出品を表示（マウント時・出品後に再取得）。`isLoading`中はゼロ値をそのまま出さずスケルトン表示（フラッシュ・オブ・ゼロコンテンツ防止） |
-| [AnalyticsPanel.tsx](src/components/AnalyticsPanel.tsx) | `getAnalytics()`で月別出品額推移・カテゴリ別構成グラフ表示（`React.lazy`で分析タブを開くまで未読み込み） |
-| [SettingsPanel.tsx](src/components/SettingsPanel.tsx) | `getEbayStatus()`でSandbox/Production両方の接続状態と現在の有効環境を表示。切替タブでどちらかを選択し、未接続なら「eBayでログイン」(`getEbayAuthUrl(env)`)、接続済みで非アクティブなら「切り替える」(`setActiveEbayEnv(env)`)ボタンを出し分け。モック解析トグル、ログアウトも |
-| Step1_ImageUpload〜Step4_Preview | 出品ウィザード（撮影→AI解析結果補正→価格調整→最終確認）。写真は複数枚（最大8枚、`App.tsx`の`MAX_PHOTOS`）選択可能。Step1は選択直後にAI解析を始めず、サムネイル確認・個別削除（×）・追加ができる中間状態を挟んでから「この写真で解析する」ボタンで`onConfirm(files)`を呼ぶ（誤った写真のまま解析してしまうのを防ぐため）。Step2の「追加」ボタンからも撮影済みの元ファイル一式(`selectedFiles`)に追加し全画像で再解析する（`App.tsx`の`runAnalysis()`）。[StepperHeader.tsx](src/components/StepperHeader.tsx)でステップ間移動（解析結果が無いうちはStep2以降不可） |
-| [ListingDetailModal.tsx](src/components/ListingDetailModal.tsx) | 最近の出品タップで開く詳細（`getListingDetail(id)`で写真・説明文・aspects取得） |
-| [Toast.tsx](src/components/Toast.tsx) / [CancelConfirmDialog.tsx](src/components/CancelConfirmDialog.tsx) | 完了・失敗通知 / 出品キャンセル確認 |
-| [BottomNav.tsx](src/components/BottomNav.tsx) | ホーム/分析/設定タブ切替 |
+| [AuthScreen.tsx](src/components/AuthScreen.tsx) | Login/signup (Supabase Auth). Shown alone when logged out. |
+| [HomeDashboard.tsx](src/components/HomeDashboard.tsx) | `getListings()` for sales summary + recent listings (refetched on mount and after publish). Shows skeleton while `isLoading` instead of flashing zero values. |
+| [AnalyticsPanel.tsx](src/components/AnalyticsPanel.tsx) | `getAnalytics()` → monthly trend + category breakdown charts. |
+| [SettingsPanel.tsx](src/components/SettingsPanel.tsx) | `getEbayStatus()` shows Sandbox/Production connection state + active env. Tab picks which env; shows "eBayでログイン" (`getEbayAuthUrl(env)`) if disconnected, "切り替える" (`setActiveEbayEnv(env)`, behind a confirm dialog) if connected-but-inactive. Also mock-analysis toggle, logout. |
+| Step1_ImageUpload → Step4_Preview | Wizard: photograph → review/edit AI result → price → confirm. Up to `MAX_PHOTOS`=8 photos. **Step1 does not auto-analyze on file pick** — shows thumbnails with per-photo remove (×) and an "追加" (add more) tile first; analysis only starts when the user taps "この写真で解析する" (`onConfirm(files)`). Step2's "追加" button appends to the original file set (`App.tsx`'s `selectedFiles`) and re-runs `runAnalysis()` over *all* photos so AI can re-synthesize with the new angle. [StepperHeader.tsx](src/components/StepperHeader.tsx) handles step nav (Step2+ blocked until analysis exists). |
+| [ListingDetailModal.tsx](src/components/ListingDetailModal.tsx) | Opens from a recent-listing tap; `getListingDetail(id)`. |
+| [Toast.tsx](src/components/Toast.tsx) / [CancelConfirmDialog.tsx](src/components/CancelConfirmDialog.tsx) | Success/error toast / cancel-listing confirm. |
+| [BottomNav.tsx](src/components/BottomNav.tsx) | Home/Analytics/Settings tabs. |
 
-- **認証**: [src/services/supabaseClient.ts](src/services/supabaseClient.ts)はpublishable/anonキーのみ使用
-  （`VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY`）。`App.tsx`が`supabase.auth.getSession()`/`onAuthStateChange()`で
-  ログイン状態監視。listings等のデータはこのクライアントから直接読み書きせず必ずバックエンド経由
-  （`listingService.ts`が各リクエストに`Authorization: Bearer <access_token>`を自動付与）。
-- **型定義**: [src/types/listing.ts](src/types/listing.ts)（`ProductData`（`imageUrls: string[]`で複数枚対応）,
-  `Condition`, AI分析結果）、[src/types/app.ts](src/types/app.ts)（`TabType`, `RecentListing`, `ListingDetail`,
-  `SalesSummary`, `AnalyticsData`, `EbayEnvironment`, `EbayStatus`）。
-- **APIクライアント**: [src/services/listingService.ts](src/services/listingService.ts)。`analyzeImageWithAI(files: File[])` /
-  `estimatePrice` / `publishToEbay` / `getListings` / `getAnalytics` / `getListingDetail` / `getEbayAuthUrl(env)` /
-  `getEbayStatus` / `setActiveEbayEnv(env)`がバックエンド（既定`http://localhost:3001/api`、`VITE_BACKEND_URL`で変更可）を呼ぶ。
-  `mockAnalyzeImage`/`mockPublishItem`（[src/mock/mockData.ts](src/mock/mockData.ts)）は設定タブのモックトグル用。
+- **Auth**: [supabaseClient.ts](src/services/supabaseClient.ts) uses only the publishable/anon key. `App.tsx` watches `supabase.auth.getSession()`/`onAuthStateChange()`. All data access goes through the backend, never this client directly (`listingService.ts` attaches `Authorization: Bearer <access_token>` to every request).
+- **Types**: [types/listing.ts](src/types/listing.ts) (`ProductData` — `imageUrls: string[]`, multi-photo — `Condition`, AI analysis results), [types/app.ts](src/types/app.ts) (`TabType`, `RecentListing`, `ListingDetail`, `SalesSummary`, `AnalyticsData`, `EbayEnvironment`, `EbayStatus`).
+- **API client**: [listingService.ts](src/services/listingService.ts) — `analyzeImageWithAI(files: File[])`, `estimatePrice`, `publishToEbay`, `getListings`, `getAnalytics`, `getListingDetail`, `getEbayAuthUrl(env)`, `getEbayStatus`, `setActiveEbayEnv(env)`, all hitting the backend (default `http://localhost:3001/api`, override via `VITE_BACKEND_URL`). `mockAnalyzeImage`/`mockPublishItem` ([mock/mockData.ts](src/mock/mockData.ts)) back the dev mock toggle.
 
-### バックエンド
+### Backend
 
-[server/index.js](server/index.js)（Express、`npm run server`、要`.env`）。`/api/ebay/callback`と
-`/api/ebay/deletion-notification`以外は全て[server/authMiddleware.js](server/authMiddleware.js)の`requireAuth`
-（`Authorization: Bearer <Supabaseアクセストークン>`を検証し`req.userId`セット、無ければ401）を通過する。
-CORSは`ALLOWED_ORIGINS`（+ localhost:5173・`https://a-ie-bay-app*.vercel.app`パターンでVercelの本番/ブランチ/
-プレビューURLを包括的に常時許可）で制限、画像アップロードは10MB上限・`image/*`のみ許可（multer）、
-HTMLレスポンスへのユーザー入力の埋め込みは`escapeHtml()`でエスケープする。
+[server/index.js](server/index.js) (Express, `npm run server`, needs `.env`). Every route except `/api/ebay/callback` and `/api/ebay/deletion-notification` goes through [authMiddleware.js](server/authMiddleware.js)'s `requireAuth` (verifies the Supabase access token → `req.userId`, else 401). CORS is restricted to `ALLOWED_ORIGINS` + `localhost:5173` + a regex covering `https://a-ie-bay-app*.vercel.app` (production/branch/preview Vercel URLs). Image upload capped at 10MB, `image/*` only (multer). Any user input echoed into an HTML response is passed through `escapeHtml()`.
 
-| Method / Path | 概要 |
+| Method / Path | Notes |
 |---|---|
-| `POST /api/analyze-image` | 画像1〜8枚（`multipart/form-data`の`images`フィールド、複数可）を受け取り、`aiProvider.js`経由でGemini/Groqに全画像まとめてタイトル・ブランド・型番・状態・説明文・aspectsを1つのJSONとして抽出させる。商品状態エージェント（`runConditionAgent`、同じく複数画像対応）とSupabase画像アップロード（`uploadProductImage`を全枚数分）を`Promise.all`で並列実行し、`imageUrls`配列を返す |
-| `POST /api/estimate-price` | eBay Browse APIで類似商品検索→IQR外れ値除去→市場トレンド/競合比較エージェント→決定的スコア（`scoreListing`）算出。**Browse APIの検索は出品先環境(Sandbox/Production)とは切り離し、`EBAY_PRODUCTION_CLIENT_ID`等が設定済みなら常にPRODUCTION側で行う**（Sandboxには実商品データがほぼ無く、実商品名で検索してもほぼ確実に0件→価格が常に$0になるため。app tokenでの読み取り専用アクセスなので出品先環境と異なっていても問題ない。Production未設定時のみ現在の出品先環境にフォールバック）。類似商品が0件でも価格を0にするだけで市場トレンド・競合比較・スコア計算自体は必ず実行する（検索キーワードは`analyzeImageWithAI`側でtitleを優先） |
-| `POST /api/publish-ebay` | `ebay_connections`のBusiness Policy ID・出荷元ロケーションを使いSell Inventory API（Item→Offer→Publish）で出品。`productData.imageUrls`（複数可）をそのままeBayの`product.imageUrls`に渡す（http(s)以外のURLは除外、1件も無ければプレースホルダー1枚にフォールバック）。必須Item Specifics（Brand/Color/Connectivity/Model/Type、`categoryId=112529`固定）を既定値で補完。成功後`saveListing()`で履歴保存（自アプリの履歴には代表画像1枚(`imageUrls[0]`)のみ保存） |
-| `GET /api/listings` | 自分の最近の出品一覧・売上サマリー（ホーム用） |
-| `GET /api/listings/:id` | 1件分の全項目（説明文・aspects含む、詳細モーダル用） |
-| `GET /api/analytics` | 月別出品額推移（直近6ヶ月）・カテゴリ別構成 |
-| `GET /api/ebay/auth-url` | `?env=SANDBOX\|PRODUCTION`（省略時SANDBOX）でeBay同意URLを発行。`createOAuthState()`が発行した使い捨てnonceを`state`にする（`userId`をそのまま埋め込まない） |
-| `GET /api/ebay/callback` | eBayからのリダイレクト先（認証対象外）。`consumeOAuthState(state)`でnonceを一度きり消費しuserId/environmentを復元、`exchangeAuthCodeForTokens`→`getEbayUsername`→`setEbayConnection`→`setActiveEbayEnv`（接続した環境に即切替）→`setupEbayPoliciesForToken()`の順で保存・自動セットアップ。`error`クエリパラメータはHTMLエスケープしてから表示（反射型XSS対策） |
-| `GET /api/ebay/status` | Sandbox/Production両方の接続状態(`ebayUsername`含む)と現在の有効環境(`activeEnv`)を返す |
-| `POST /api/ebay/active-env` | 接続済みの環境へ即時切替（`{ environment }`、未接続なら400）。サーバー再起動・再デプロイ不要 |
-| `GET,POST /api/ebay/deletion-notification` | eBay Marketplace Account Deletion通知（認証対象外）。GETはchallenge_code検証、POSTは`verifyEbayNotificationSignature()`で`x-ebay-signature`を検証した上で該当`ebay_username`の`ebay_connections`行を削除し連携解除（署名不一致は412拒否、鍵取得等のインフラ障害時はフェイルオープンでログのみ） |
+| `POST /api/analyze-image` | Accepts 1–8 images (`multipart/form-data`, field `images`). Sends all images in one call to Gemini/Groq for a single combined title/brand/model/condition/description/aspects JSON. Runs `runConditionAgent` (also multi-image) and `uploadProductImage` (all files) via `Promise.all`; returns `imageUrls[]`. |
+| `POST /api/estimate-price` | Browse API search → IQR outlier removal → market-trend/competitor agents → deterministic score (`scoreListing`). **Search always hits PRODUCTION Browse API when `EBAY_PRODUCTION_CLIENT_ID` etc. are set, regardless of the user's active publish env** — Sandbox has almost no real inventory, so real product searches return 0 hits there and price was always $0 (confirmed: same query → 0 results in Sandbox vs 1644 in Production). Falls back to the active env only if Production isn't configured. Even with 0 comparable listings, market-trend/competitor/score are still computed (never short-circuits to a bare zero response). The market-trend/competitor AI calls are wrapped in their own try/catch — if the text AI provider fails (e.g. bad/missing `GROQ_API_KEY` when `TEXT_AI_PROVIDER=groq`), the already-computed price stats are still returned instead of the whole endpoint failing. |
+| `POST /api/publish-ebay` | Uses `ebay_connections`' Business Policy IDs + location via Sell Inventory API (Item→Offer→Publish). `productData.imageUrls` passed straight through as eBay's `product.imageUrls` (non-http(s) entries dropped; placeholder image if none valid). Fills required Item Specifics (Brand/Color/Connectivity/Model/Type, fixed `categoryId=112529`) with defaults. **Condition** is resolved via `CONDITION_INFO` (app's 4-tier NEW/USED_EXCELLENT/USED_GOOD/USED_FAIR → real eBay `ConditionEnum`+numeric id; `USED_FAIR` isn't a real eBay enum, mapped to `USED_ACCEPTABLE`), then checked against that category's actual allowed conditions via Sell Metadata API `get_item_condition_policies` and swapped to the closest allowed candidate if unsupported (category `112529` only allows NEW/NEW_OTHER/USED_EXCELLENT/FOR_PARTS_OR_NOT_WORKING in production — `USED_GOOD` used to get rejected with errorId 25021). Saves history via `saveListing()` (own history table stores one cover image, `imageUrls[0]`). |
+| `GET /api/listings` | Own recent listings + sales summary. |
+| `GET /api/listings/:id` | Full row incl. description/aspects. |
+| `GET /api/analytics` | Monthly trend (6mo) + category breakdown. |
+| `GET /api/ebay/auth-url` | `?env=SANDBOX\|PRODUCTION` (default SANDBOX). `state` = a one-time nonce from `createOAuthState()`, not a raw userId. |
+| `GET /api/ebay/callback` | Public. `consumeOAuthState(state)` burns the nonce once to recover userId/env, then `exchangeAuthCodeForTokens`→`getEbayUsername`→`setEbayConnection`→`setActiveEbayEnv`→`setupEbayPoliciesForToken()`. `error` query param is HTML-escaped (was a reflected-XSS hole). |
+| `GET /api/ebay/status` | Both envs' connection state (+ `ebayUsername`) and `activeEnv`. |
+| `POST /api/ebay/active-env` | Instant switch to an already-connected env (`{ environment }`, 400 if not connected). No restart needed. |
+| `GET,POST /api/ebay/deletion-notification` | Public. GET = challenge_code handshake. POST verifies `x-ebay-signature` via `verifyEbayNotificationSignature()` before deleting the matching `ebay_connections` row (bad signature → 412; infra failure while verifying → fail-open + log, so a real deletion notice is never silently dropped). `deleteEbayConnectionsByUsername()` returns the actual deleted row count so the log accurately says "no connection found" vs "disconnected" (a notified username with zero matching rows — e.g. eBay's own test notifications — is not an app bug or a data leak from unrelated users). |
 
-#### バックエンドモジュール
+#### Backend modules
 
-| ファイル | 役割 |
+| File | Role |
 |---|---|
-| [authMiddleware.js](server/authMiddleware.js) | `requireAuth`。Supabaseアクセストークン検証→`req.userId` |
-| [aiProvider.js](server/aiProvider.js) | `.env`の`AI_PROVIDER`(`gemini`/`groq`)で画像解析(vision)用エンジンを、`TEXT_AI_PROVIDER`（未設定時`AI_PROVIDER`と同じ）でテキストのみのエージェント用エンジンを独立に選択できる。[geminiClient.js](server/geminiClient.js)/[groqClient.js](server/groqClient.js)を切替。`generateImageJson(promptText, images)`（vision、`AI_PROVIDER`側）と`generateJson()`（テキストのみ、`TEXT_AI_PROVIDER`側）を公開、AI呼び出しは必ずこれ経由。`images`は`[{base64Image, mimeType}, ...]`（1枚以上）で、複数枚を1回のAI呼び出しにまとめて渡し1つの結果に統合させる。`TEXT_AI_PROVIDER=groq`にすると1出品あたりのGemini呼び出しが4回→2回に減る（`runMarketTrendAgent`/`runCompetitorAgent`はvision不要なためGroqに逃がせる） |
-| [analysisAgents.js](server/analysisAgents.js) | `runConditionAgent(images)`（状態・欠陥検出、複数枚対応）、`runMarketTrendAgent`/`runCompetitorAgent`（市場トレンド・競合比較。類似出品0件時も空リストとして必ず実行しdemandLevel等を返す）、`scoreListing`（LLM不使用の決定的スコア計算） |
-| [priceStats.js](server/priceStats.js) | IQR外れ値除去`removeOutliersByIQR()` |
-| [ebayAuth.js](server/ebayAuth.js) | eBay OAuth共通処理。`getEbayEnvConfig(environment)`が`'SANDBOX'`/`'PRODUCTION'`ごとのbaseUrl/authUrl/クライアントID等（`EBAY_SANDBOX_*`/`EBAY_PRODUCTION_*`）を解決し、`getAppAccessToken`/`getUserAccessToken`/`exchangeAuthCodeForTokens`/`getEbayUsername`は全て`environment`引数必須。`getAppAccessToken`/`getUserAccessToken`は[ebayTokenCache.js](server/ebayTokenCache.js)でトークンをキャッシュし、有効期限内は再取得（ネットワーク往復）をスキップする。`getUserAccessToken(userId, environment)`は`ebay_connections`のrefresh_tokenで取得（`userId`省略時`.env`の`EBAY_USER_REFRESH_TOKEN`、`setup:policies`ローカル専用、`environment`省略時`.env`の`EBAY_ENV`）。`USER_SCOPES`(出品/Policy用、refresh grantで常用)と`AUTH_SCOPES`(初回同意専用、`commerce.identity.readonly`追加)を分離—混ぜると既存接続の更新が未同意スコープエラーで壊れるため |
-| [ebayConnectionsRepository.js](server/ebayConnectionsRepository.js) | `ebay_connections`のCRUD、全関数`environment`引数必須（1ユーザーがSandbox/Production同時接続可）。`getEbayConnection`/`getEbayRefreshToken`/`setEbayConnection`/`getAllEbayConnections`(両環境まとめて取得)/`deleteEbayConnectionsByUsername`(環境問わずusername一致で削除) |
-| [userSettingsRepository.js](server/userSettingsRepository.js) | `user_settings`のCRUD。`getActiveEbayEnv(userId)`/`setActiveEbayEnv(userId, environment)`—ユーザーが今どちらの環境で出品するかを保持（未設定時`'SANDBOX'`） |
-| [setupPolicies.js](server/setupPolicies.js) | `ensureBusinessPolicyOptIn`/`ensureFulfillmentPolicy`/`ensureReturnPolicy`/`ensureMerchantLocation`（get-or-create、全て`environment`引数必須）をまとめた`setupEbayPoliciesForToken(token, environment)`。callback自動実行の他`npm run setup:policies`でも単独動作（`.env`の`EBAY_ENV`使用、`isDirectRun`ガード） |
-| [envFile.js](server/envFile.js) | `.env`書き換え`updateEnvValue()`（`setup:policies`ローカル実行専用） |
-| [supabaseClient.js](server/supabaseClient.js) | `service_role`キー使用。未設定時`supabase`は`null`（関連機能のみスキップ、サーバーは落ちない） |
-| [listingsRepository.js](server/listingsRepository.js) | `listings`のCRUD、全関数`userId`必須・`.eq('user_id', userId)`（`saveListing`/`getRecentListings`/`getListingByListingId`/`getSalesSummary`/`getAnalytics`）。`getRecentListings`は一覧に不要な`description`/`aspects`を除いた列のみ選択（転送量削減、詳細は`getListingByListingId`で全列取得） |
-| [ebayTokenCache.js](server/ebayTokenCache.js) | eBay app/userアクセストークンのメモリキャッシュ（`expires_in`ベース、60秒の安全マージン付き）。`/api/estimate-price`・`/api/publish-ebay`を呼ぶたびに毎回リフレッシュ通信していたのを解消（キャッシュヒット時は実測0.数ms、ミス時は約350ms） |
-| [oauthStateStore.js](server/oauthStateStore.js) | eBay OAuthの`state`用、使い捨て・10分有効期限付きのランダムnonceストア（メモリ保持）。`createOAuthState(userId, environment)`/`consumeOAuthState(nonce)`（取得と同時に削除、リプレイ不可）。予測可能な`userId:environment`を直接stateにしないためのCSRF/アカウント紐付け偽装対策 |
-| [ebayNotificationVerifier.js](server/ebayNotificationVerifier.js) | `verifyEbayNotificationSignature(body, signatureHeader)`。`x-ebay-signature`ヘッダー（base64→JSON、`{kid, signature}`）をeBayの公開鍵API（Sandbox/Production両方を試行）で検証し、削除通知の偽装を防ぐ。実装は[eBay公式Node SDK](https://github.com/eBay/event-notification-nodejs-sdk)準拠（アルゴリズムは`'ssl3-sha1'`ではなくOpenSSL 3.x/Node18+互換の`'sha1'`を使用） |
+| [authMiddleware.js](server/authMiddleware.js) | `requireAuth` — verifies Supabase token → `req.userId`. |
+| [aiProvider.js](server/aiProvider.js) | `AI_PROVIDER` (`gemini`/`groq`) picks the vision engine; `TEXT_AI_PROVIDER` (defaults to `AI_PROVIDER`) independently picks the engine for text-only agents. Exports `generateImageJson(promptText, images)` (vision) and `generateJson()` (text). `images` = `[{base64Image, mimeType}, ...]`. Setting `TEXT_AI_PROVIDER=groq` cuts Gemini calls per listing from 4→2 (market-trend/competitor agents need no vision). |
+| [analysisAgents.js](server/analysisAgents.js) | `runConditionAgent(images)`, `runMarketTrendAgent`/`runCompetitorAgent` (always run, even with 0 comparable items), `scoreListing` (deterministic, no LLM). |
+| [priceStats.js](server/priceStats.js) | `removeOutliersByIQR()`. |
+| [ebayAuth.js](server/ebayAuth.js) | `getEbayEnvConfig(environment)` resolves baseUrl/authUrl/credentials per `'SANDBOX'`/`'PRODUCTION'` (`EBAY_SANDBOX_*`/`EBAY_PRODUCTION_*`). All token functions take `environment` explicitly and are cached via [ebayTokenCache.js](server/ebayTokenCache.js) (`expires_in`-based, skips redundant refresh round-trips — cache hit ~0ms vs ~350ms). `USER_SCOPES` (used on every refresh-grant call) vs `AUTH_SCOPES` (consent-screen only, adds `commerce.identity.readonly`) are deliberately separate — merging them would break existing connections' token refresh with an unconsented-scope error. |
+| [ebayConnectionsRepository.js](server/ebayConnectionsRepository.js) | `ebay_connections` CRUD, all functions require `environment` (one user can hold both Sandbox + Production connections). |
+| [userSettingsRepository.js](server/userSettingsRepository.js) | `user_settings` — `getActiveEbayEnv`/`setActiveEbayEnv` (default `'SANDBOX'`). |
+| [setupPolicies.js](server/setupPolicies.js) | get-or-create Business Policies/location, bundled as `setupEbayPoliciesForToken(token, environment)`. Also runnable standalone via `npm run setup:policies`. |
+| [envFile.js](server/envFile.js) | `.env` rewriting, local `setup:policies` only. |
+| [supabaseClient.js](server/supabaseClient.js) | `service_role` client; `null` if unconfigured (degrades gracefully, doesn't crash the server). |
+| [listingsRepository.js](server/listingsRepository.js) | `listings` CRUD, all scoped by `userId`. `getRecentListings` selects only list-view columns (skips `description`/`aspects` to cut payload size). |
+| [ebayTokenCache.js](server/ebayTokenCache.js) | In-memory app/user access-token cache. |
+| [oauthStateStore.js](server/oauthStateStore.js) | One-time, 10-min-TTL random nonce store for OAuth `state` (`createOAuthState`/`consumeOAuthState`) — prevents the account-linking CSRF you'd get from using a predictable `userId:environment` as `state`. |
+| [ebayNotificationVerifier.js](server/ebayNotificationVerifier.js) | Verifies `x-ebay-signature` against eBay's public-key API (tries Production then Sandbox), per [eBay's official Node SDK](https://github.com/eBay/event-notification-nodejs-sdk). Uses digest `'sha1'`, not the SDK's `'ssl3-sha1'` — the latter lives in OpenSSL's legacy provider and isn't available by default on Node 18+/OpenSSL 3.x. |
 
-### データベース（Supabase）
+### Database (Supabase)
 
-Postgres + Storage + Auth使用。SQL Editorで実行:
+Postgres + Storage + Auth. Run in SQL Editor:
 
 ```sql
 create table public.listings (
@@ -118,7 +100,7 @@ create table public.listings (
   created_at timestamptz not null default now()
 );
 
--- ユーザー×環境(SANDBOX/PRODUCTION)ごとの接続情報。1ユーザーが両方を同時に接続できる
+-- per user × environment (SANDBOX/PRODUCTION); one user can hold both simultaneously
 create table public.ebay_connections (
   user_id uuid not null references auth.users(id) on delete cascade,
   environment text not null default 'SANDBOX',
@@ -126,114 +108,85 @@ create table public.ebay_connections (
   fulfillment_policy_id text,
   return_policy_id text,
   merchant_location_key text,
-  ebay_username text, -- アカウント削除通知の突合用
+  ebay_username text, -- for matching account-deletion notifications
   updated_at timestamptz not null default now(),
   primary key (user_id, environment)
 );
 
--- ユーザーごとに「今どちらの環境で出品するか」を保持（設定タブからの即時切替用）
+-- which env is currently active for each user (instant switch from Settings tab)
 create table public.user_settings (
   user_id uuid primary key references auth.users(id) on delete cascade,
   active_ebay_env text not null default 'SANDBOX',
   updated_at timestamptz not null default now()
 );
 
--- バックエンドはservice_roleキーで常にRLSをバイパスするが、直接アクセス経路を塞ぐため有効化
+-- backend always bypasses RLS via service_role, but enable it to block any direct-access path
 alter table public.listings enable row level security;
 alter table public.ebay_connections enable row level security;
 alter table public.user_settings enable row level security;
 ```
 
-既に`ebay_connections`が`user_id`単独主キーで存在する場合のマイグレーション:
-```sql
-alter table public.ebay_connections drop constraint ebay_connections_pkey;
-alter table public.ebay_connections add column environment text not null default 'SANDBOX';
-alter table public.ebay_connections add primary key (user_id, environment);
+Also create a **Public** Storage bucket named `product-images`.
 
-create table public.user_settings (
-  user_id uuid primary key references auth.users(id) on delete cascade,
-  active_ebay_env text not null default 'SANDBOX',
-  updated_at timestamptz not null default now()
-);
-alter table public.user_settings enable row level security;
-```
+**Auth setting**: Authentication → Sign In/Providers → Email → "Confirm email" ON = signup requires email confirmation (prod); OFF = instant login (dev).
 
-Storageに`product-images`という**Public**バケットも作成（撮影画像の公開URL用）。
+## eBay integration setup
 
-**Authentication設定**: 「Authentication」→「Sign In / Providers」→「Email」の「Confirm email」有効=サインアップ時
-確認メール必須（本番向け）、無効=即ログイン（開発向け）。
+Sandbox/Production are switchable instantly from the Settings tab (one user can connect both at once; no restart/redeploy to switch). Production keyset is optional — Sandbox alone is fully functional.
 
-## eBay連携セットアップ
+**First-time connect** (per environment, once):
+1. In eBay Developer Portal, create a keyset (`EBAY_SANDBOX_CLIENT_ID` etc. / `EBAY_PRODUCTION_CLIENT_ID` etc.) and RuName; set "Your auth accepted URL" to `https://<backend-url>/api/ebay/callback` (same URL works for both envs).
+2. Set shipping-origin address in `.env` via `EBAY_LOCATION_*` (single shared setting across the whole app/both envs).
+3. Log into the app → Settings → pick Sandbox/Production → "eBayでログイン" → approve on eBay's consent screen. The approved account becomes that env's connection and is set active immediately; `/api/ebay/callback` also auto-runs Business Policy/location setup.
+4. Once Settings shows that env as connected, `/api/publish-ebay` works. If both envs are already connected, switching is just the "切り替える" button (no re-auth).
 
-Sandbox/Productionは設定タブから即時切替可能（1ユーザーが両方を同時に接続でき、切替にサーバー再起動・
-再デプロイ不要）。Productionのキーセットが無い/無効でもSandboxのみで全機能が動作する。
+**Marketplace Account Deletion notification** (required for production compliance; webhook already implemented):
+1. Set `EBAY_DELETION_VERIFICATION_TOKEN` (32–80 random alphanumeric chars, e.g. `openssl rand -hex 32`) and `EBAY_DELETION_ENDPOINT_URL` (`https://<backend-url>/api/ebay/deletion-notification`) on Render.
+2. Register the same URL/token in Developer Portal → target keyset → Notifications → Marketplace Account Deletion (eBay immediately does a `challenge_code` handshake against `GET .../deletion-notification`).
+3. From then on, a real deletion notice auto-disconnects via `deleteEbayConnectionsByUsername()`. Note: `ebay_username` is only populated for connections made *after* this feature shipped — earlier connections stay unmatched until reconnected.
 
-**初回接続**（`.env`のAPIキー設定だけでは出品不可、環境ごとに一度だけ）:
-1. eBay Developer Portalで対象環境（Sandbox/Production）のキーセット（`EBAY_SANDBOX_CLIENT_ID`等 /
-   `EBAY_PRODUCTION_CLIENT_ID`等）とRuNameを作成し、「Your auth accepted URL」に
-   `https://<バックエンド公開URL>/api/ebay/callback`を設定（httpsのlocalhostが使えない場合ngrok等、
-   Sandbox/Productionで別々のRuName・別々のURLを登録する必要はなく同一URLでよい）。
-2. `.env`の`EBAY_LOCATION_*`に出荷元住所を設定（アプリ全体・両環境で共有の単一設定）。
-3. アプリにログイン→設定タブ→環境タブでSandbox/Productionを選択→「eBayでログイン」→eBay同意画面で許可
-   （**同意したeBayアカウントでその環境が接続され、自動的に出品先として切り替わる**）。`/api/ebay/callback`が
-   Business Policies・出荷元ロケーションの自動セットアップまで一括実行、再起動不要。
-4. 設定タブでその環境の接続状態が「接続中」になれば`/api/publish-ebay`が実行可能。既に両方接続済みなら、
-   設定タブの「切り替える」ボタンでOAuthをやり直さずに即座に出品先を変更できる。
+## Deploy
 
-**Marketplace Account Deletion通知**（本番運用の必須コンプライアンス対応、Webhookエンドポイント実装済み）:
-1. `EBAY_DELETION_VERIFICATION_TOKEN`（32〜80文字の英数字乱数、例`openssl rand -hex 32`）と
-   `EBAY_DELETION_ENDPOINT_URL`（`https://<公開URL>/api/ebay/deletion-notification`）をRenderの環境変数に設定。
-2. eBay Developer Portalの対象キーセット→「Notifications」→Marketplace Account Deletion設定で同じURL/トークンを登録
-   （保存時にeBayが`challenge_code`付きGETで疎通確認、`GET /api/ebay/deletion-notification`のsha256応答と一致すればOK）。
-3. 以後、接続中アカウントが削除・閉鎖されるとPOST通知が届き`deleteEbayConnectionsByUsername()`が自動で連携解除する。
-   ※`ebay_username`はこの機能実装後に「eBayでログイン」したアカウントのみ保存される（それ以前の接続は`null`のまま突合対象外、再ログインで補完）。
+- **Frontend**: Vercel (auto-detects Vite). Needs `VITE_BACKEND_URL` (Render URL; see [listingService.ts](src/services/listingService.ts), defaults to `localhost:3001`) and `VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY`.
+- **Backend**: Render Web Service ([render.yaml](render.yaml) has the Blueprint). `sync: false` vars need manual entry in the dashboard (see [.env.example](.env.example)). `PORT` is auto-injected. No persistent disk — tokens etc. live in Supabase, not `.env`, so that's not an issue in practice.
+- After deploying, update the RuName's "Your auth accepted URL" in eBay Developer Portal to the real Render URL.
 
-## デプロイ
+## Env vars
 
-- **フロントエンド**: Vercel（Vite自動検出、GitHub連携）。環境変数`VITE_BACKEND_URL`（Renderの公開URL、
-  [listingService.ts](src/services/listingService.ts)参照、未設定時`localhost:3001`）、`VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY`必須。
-- **バックエンド**: Render（Web Service、[render.yaml](render.yaml)にBlueprint定義済み）。`sync: false`の環境変数は
-  ダッシュボードで手動入力（[.env.example](.env.example)参照）。`PORT`は自動注入。永続ディスクが無いため
-  トークン等はダッシュボードの環境変数として保存（DB保存に切替済みのため`.env`書き換えは基本不要）。
-- デプロイ後、eBay Developer PortalのRuNameの「Your auth accepted URL」を実際のRender公開URLに変更する。
+`.env` is gitignored; see [.env.example](.env.example) for the full list. Get values from Google AI Studio / Groq Console / Supabase / eBay Developer.
 
-## 環境変数
-
-`.env`はGit管理対象外。値は[.env.example](.env.example)参照、Google AI Studio/Groq Console/Supabase/eBay Developerで取得。
-
-| カテゴリ | 変数 |
+| Category | Vars |
 |---|---|
-| サーバー | `PORT` / `ALLOWED_ORIGINS`（CORS許可オリジンの追加、カンマ区切り。localhost:5173と本番Vercel URLは常時許可） |
-| Supabase(バックエンド) | `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` |
-| Supabase(フロントエンド、ビルド埋込) | `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` |
-| AI | `AI_PROVIDER` / `TEXT_AI_PROVIDER`（任意、テキスト専用エージェントだけ別エンジンにする場合） / `GEMINI_API_KEY` / `GEMINI_MODEL` / `GROQ_API_KEY` / `GROQ_MODEL` |
-| eBay認証 | `EBAY_SANDBOX_CLIENT_ID` / `EBAY_SANDBOX_CLIENT_SECRET` / `EBAY_SANDBOX_RU_NAME` / `EBAY_PRODUCTION_CLIENT_ID` / `EBAY_PRODUCTION_CLIENT_SECRET` / `EBAY_PRODUCTION_RU_NAME`（Production未取得ならSandboxのみ空でなく設定すればよい） / `EBAY_ENV` / `EBAY_USER_REFRESH_TOKEN`(いずれも`setup:policies`ローカル専用) |
-| eBay出品設定 | `EBAY_MERCHANT_LOCATION_KEY` / `EBAY_FULFILLMENT_POLICY_ID` / `EBAY_RETURN_POLICY_ID`(いずれも`setup:policies`ローカル専用) / `EBAY_PAYMENT_POLICY_ID` |
-| 出荷元住所 | `EBAY_LOCATION_ADDRESS_LINE1` / `EBAY_LOCATION_CITY` / `EBAY_LOCATION_STATE_OR_PROVINCE` / `EBAY_LOCATION_POSTAL_CODE` / `EBAY_LOCATION_COUNTRY` |
-| eBay削除通知 | `EBAY_DELETION_VERIFICATION_TOKEN` / `EBAY_DELETION_ENDPOINT_URL` |
+| Server | `PORT` / `ALLOWED_ORIGINS` (extra CORS origins, comma-separated; localhost:5173 + prod Vercel URL always allowed) |
+| Supabase (backend) | `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` |
+| Supabase (frontend, build-time) | `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` |
+| AI | `AI_PROVIDER` / `TEXT_AI_PROVIDER` (optional) / `GEMINI_API_KEY` / `GEMINI_MODEL` / `GROQ_API_KEY` / `GROQ_MODEL` |
+| eBay auth | `EBAY_SANDBOX_CLIENT_ID`/`_SECRET`/`_RU_NAME`, `EBAY_PRODUCTION_CLIENT_ID`/`_SECRET`/`_RU_NAME` (Production optional), `EBAY_ENV`/`EBAY_USER_REFRESH_TOKEN` (local `setup:policies` only) |
+| eBay listing config | `EBAY_MERCHANT_LOCATION_KEY` / `EBAY_FULFILLMENT_POLICY_ID` / `EBAY_RETURN_POLICY_ID` (local-only fallbacks) / `EBAY_PAYMENT_POLICY_ID` |
+| Shipping origin | `EBAY_LOCATION_ADDRESS_LINE1` / `_CITY` / `_STATE_OR_PROVINCE` / `_POSTAL_CODE` / `_COUNTRY` |
+| eBay deletion webhook | `EBAY_DELETION_VERIFICATION_TOKEN` / `EBAY_DELETION_ENDPOINT_URL` |
 
-## 仕様書との差異
+## Spec deviations
 
-[PROJECT_REQUIREMENTS.md](PROJECT_REQUIREMENTS.md)はPython/FastAPI・OpenAI GPT-4o Vision想定だが、実装は
-Node.js/Express + Gemini（`@google/genai`、Groq切替可）。エンドポイント名・レスポンスキー命名規則(snake_case)は仕様書に合わせた。
+[PROJECT_REQUIREMENTS.md](PROJECT_REQUIREMENTS.md) assumed Python/FastAPI + OpenAI GPT-4o Vision; actual implementation is Node/Express + Gemini (`@google/genai`, Groq swappable). Endpoint names and snake_case response keys were kept aligned with the spec.
 
-## 既知の制約・未実装
+## Known limitations
 
-- 市場トレンド分析はeBay Browse APIの「現在アクティブな出品」のみが根拠（売却実績データではない、Marketplace Insights APIは個別承認制のため未使用）。
-- 総合判定スコアはAI解析直後の一時点スナップショット。価格を後から調整してもリアルタイム再計算はしない。
-- 出荷元住所はアプリ全体で共有の単一設定（Business Policies自体はユーザーごとのeBayアカウントに個別作成）。
-- **売上実績の追跡なし**: `listings`の「売却済み(SOLD)」への更新機構が無く全出品ACTIVEのまま記録され続けるため、`totalRevenue`/`monthlyRevenue`/`soldItemsCount`は常に0、月次売上バッジも非表示のまま。実運用にはeBay売却通知（Webhook等）受信の仕組みが必要。
-- **商品画像**: アップロード失敗時・モックモード時（`useMockAnalysis`ON、AI呼び出しをスキップしダミーデータで代用する開発者向けトグル）は`blob:`にフォールバックし、`/api/publish-ebay`側でプレースホルダー画像（`https://placehold.co/500x500.png`）に強制差し替える暫定対応あり。
-- `categoryId`は仮の固定値(`112529`)。実運用にはTaxonomy API等での適切なカテゴリ判定が必要。
-- **AI APIクォータ**: 画像1枚あたり最大4回のAI呼び出し（基本抽出・状態・市場トレンド・競合比較）が発生し無料枠の制限に達しやすい。Gemini→Groq切替は`aiProvider.js`参照。
-- Sandbox出品テスト・Application Growth Check(AGC)申請（本番呼び出し上限引き上げ）は未着手。eBay Developer Portal上でユーザー自身が行う必要がある。
+- Market-trend analysis is based only on eBay Browse API's *currently active* listings, not actual sales (Marketplace Insights API needs individual approval, unused).
+- Overall score is a snapshot from analysis time; doesn't recompute live as price is adjusted.
+- Shipping origin is one single app-wide setting (Business Policies themselves are per-user/per-eBay-account).
+- **No sold-item tracking**: nothing marks a `listings` row `SOLD`, so `totalRevenue`/`monthlyRevenue`/`soldItemsCount` stay 0 and the monthly-change badge stays hidden. Would need an eBay sale-notification webhook.
+- **Images**: failed upload or mock mode (`useMockAnalysis` dev toggle) falls back to a `blob:` URL client-side; `/api/publish-ebay` swaps any non-http(s) URL for a placeholder (`https://placehold.co/500x500.png`).
+- `categoryId` is a hardcoded placeholder (`112529`); real use needs Taxonomy API-based category detection.
+- **AI quota**: up to 4 AI calls per photo set (extraction, condition, market-trend, competitor) — hits free-tier limits fast. `TEXT_AI_PROVIDER=groq` halves Gemini's share; see `aiProvider.js`.
+- Sandbox listing tests and Application Growth Check (AGC, raises prod call limits) haven't been done — both require the user's own action in Developer Portal.
 
-## セキュリティ対策
+## Security
 
-- **CORS**: `ALLOWED_ORIGINS`（+ localhost:5173・本番Vercel URL）以外のオリジンからのfetch/XHRは拒否。
-- **XSS対策**: `/api/ebay/callback`のエラーメッセージ等、ユーザー入力由来の値をHTMLに埋め込む箇所は`escapeHtml()`で必ずエスケープする。
-- **OAuth CSRF対策**: `state`パラメータは`oauthStateStore.js`が発行する使い捨て・10分有効期限のランダムnonce（`userId`を直接含めない）。他人のSupabaseユーザーIDを知っているだけではアカウントを紐付けられない。
-- **削除通知の真正性検証**: `POST /api/ebay/deletion-notification`は`ebayNotificationVerifier.js`で`x-ebay-signature`ヘッダーを検証し、eBay以外からの偽装リクエストで他人のeBay連携を強制切断されないようにする。
-- **アップロード制限**: 画像アップロードは10MB上限・`image/*`のみ許可（multer）。
-- **認証・データ分離**: 全APIは`requireAuth`でSupabaseアクセストークンを検証し`req.userId`をセット、DBアクセスは全て`user_id`（`ebay_connections`は`user_id, environment`）でスコープする。RLSは有効化済みだがバックエンドは`service_role`で常時バイパスする設計のため、実質的なアクセス制御はアプリケーション層のこのスコープ処理が担う。
-- **秘密情報**: `.env`はgit管理対象外、service_role/クライアントシークレット等はフロントエンドに一切渡さない。
+- **CORS**: only `ALLOWED_ORIGINS` + localhost:5173 + prod Vercel URL pattern.
+- **XSS**: any user-controlled value interpolated into an HTML response goes through `escapeHtml()`.
+- **OAuth CSRF**: `state` is a one-time, 10-min-TTL random nonce (`oauthStateStore.js`), never a raw userId — knowing someone's Supabase user ID alone can't link your eBay account to their app account.
+- **Deletion-notification authenticity**: `POST /api/ebay/deletion-notification` verifies `x-ebay-signature` (`ebayNotificationVerifier.js`) before acting, so a forged request can't sever someone else's eBay connection.
+- **Upload limits**: 10MB cap, `image/*` only (multer).
+- **Auth/data isolation**: every API verifies the Supabase token via `requireAuth` → `req.userId`; all DB access is scoped by `user_id` (`ebay_connections` by `user_id, environment`). RLS is on, but the backend's `service_role` always bypasses it — actual access control lives in this application-layer scoping.
+- **Secrets**: `.env` is gitignored; service_role/client-secret values never reach the frontend.

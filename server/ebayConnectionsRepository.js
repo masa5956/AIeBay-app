@@ -54,8 +54,14 @@ export async function setEbayConnection(
 // 接続情報（refresh_token等）を完全に削除し、連携を解除する（該当eBayアカウントを接続していた
 // 全アプリユーザー・全環境分が対象。以後そのアカウントでは出品できなくなり、再接続するには
 // 改めて「eBayでログイン」から同意し直す必要がある）。
+// 戻り値: 実際に削除した行数（呼び出し側が「本当に自アプリの接続だったか」をログに正確に残すため）。
 export async function deleteEbayConnectionsByUsername(ebayUsername) {
-  if (!supabase || !ebayUsername) return;
-  const { error } = await supabase.from('ebay_connections').delete().eq('ebay_username', ebayUsername);
+  if (!supabase || !ebayUsername) return 0;
+  const { data, error } = await supabase
+    .from('ebay_connections')
+    .delete()
+    .eq('ebay_username', ebayUsername)
+    .select('user_id');
   if (error) throw error;
+  return data?.length ?? 0;
 }

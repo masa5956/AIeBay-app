@@ -93,13 +93,24 @@ async function uploadProductImage(buffer, mimetype) {
   return data.publicUrl;
 }
 
-// eBayのcondition値からBrowse APIのconditionIdへのマッピング
-const CONDITION_ID_MAP = {
-  NEW: '1000',
-  USED_EXCELLENT: '3000',
-  USED_GOOD: '4000',
-  USED_FAIR: '5000',
+// アプリ内部で使う簡易4段階の商品状態評価(AIの判定・UI表示用)と、eBayの実際のConditionEnum文字列・
+// 数値conditionIdとの対応表。"USED_FAIR"はeBayの正式なConditionEnum値ではなく本アプリ独自の
+// 簡易名称のため、eBayに送信する際は必ずこの表でENUM名・数値IDに変換してから使う
+// （数値IDはeBay Sell Metadata API `get_item_condition_policies` のレスポンスで確認済み）。
+const CONDITION_INFO = {
+  NEW: { enum: 'NEW', id: '1000' },
+  USED_EXCELLENT: { enum: 'USED_EXCELLENT', id: '3000' },
+  USED_GOOD: { enum: 'USED_GOOD', id: '5000' },
+  USED_FAIR: { enum: 'USED_ACCEPTABLE', id: '6000' },
 };
+// カテゴリが上記4つのいずれも許可していない場合の最終フォールバック候補（実在するeBay ConditionEnum）
+const FALLBACK_CONDITION_CANDIDATES = [
+  { key: 'USED_EXCELLENT', enum: 'USED_EXCELLENT', id: '3000' },
+  { key: 'NEW', enum: 'NEW', id: '1000' },
+  { key: 'USED_GOOD', enum: 'USED_GOOD', id: '5000' },
+  { key: 'USED_FAIR', enum: 'USED_ACCEPTABLE', id: '6000' },
+  { key: 'FOR_PARTS', enum: 'FOR_PARTS_OR_NOT_WORKING', id: '7000' },
+];
 
 
 // =================================================================
@@ -203,8 +214,8 @@ app.post('/api/estimate-price', requireAuth, async (req, res) => {
         params: {
           q: keywords,
           limit: 50,
-          filter: condition && CONDITION_ID_MAP[condition]
-            ? `buyingOptions:{FIXED_PRICE},conditionIds:{${CONDITION_ID_MAP[condition]}}`
+          filter: condition && CONDITION_INFO[condition]
+            ? `buyingOptions:{FIXED_PRICE},conditionIds:{${CONDITION_INFO[condition].id}}`
             : 'buyingOptions:{FIXED_PRICE}',
         },
       }
@@ -238,11 +249,19 @@ app.post('/api/estimate-price', requireAuth, async (req, res) => {
       .filter((item) => item.price > 0);
     const draft = productDraft || { title: keywords };
 
-    // 市場トレンド分析・競合比較エージェントを並列実行（高速レスポンスのため）
-    const [marketTrend, competitorSuggestions] = await Promise.all([
-      runMarketTrendAgent(keywords, simplifiedItems),
-      runCompetitorAgent(draft, simplifiedItems.slice(0, 5)),
-    ]);
+    // 市場トレンド分析・競合比較エージェントを並列実行（高速レスポンスのため）。
+    // AIプロバイダー側の障害（APIキー不正・レート制限等）でここが失敗しても、既に計算済みの
+    // 価格統計(suggested_price等)まで巻き添えで失わないよう、個別にtry/catchして続行する。
+    let marketTrend;
+    let competitorSuggestions;
+    try {
+      [marketTrend, competitorSuggestions] = await Promise.all([
+        runMarketTrendAgent(keywords, simplifiedItems),
+        runCompetitorAgent(draft, simplifiedItems.slice(0, 5)),
+      ]);
+    } catch (agentError) {
+      console.error('市場トレンド/競合比較エージェントの実行に失敗しました（価格のみ返します）:', agentError?.response?.data || agentError);
+    }
 
     // 総合判定スコアはLLM呼び出しではなく決定的な計算（高速・低コスト・再現性のため）
     const { overallScore, recommendation } = scoreListing({
@@ -293,11 +312,39 @@ app.post('/api/publish-ebay', requireAuth, async (req, res) => {
     const merchantLocationKey = connection.merchant_location_key || 'DEFAULT_LOCATION';
     const categoryId = productData.categoryId || '112529'; // カテゴリー未指定時のフォールバック（テスト用ID）
 
-    // AIが生成したconditionがeBayの許容する4値のいずれとも一致しない場合に備え、
-    // 不正な値はデフォルトにフォールバックする（Inventory APIが「conditionがカテゴリに対し無効」として
-    // 出品全体を拒否するのを防ぐため）
-    const VALID_CONDITIONS = ['NEW', 'USED_EXCELLENT', 'USED_GOOD', 'USED_FAIR'];
-    const condition = VALID_CONDITIONS.includes(productData.condition) ? productData.condition : 'USED_EXCELLENT';
+    // AIが生成したconditionがアプリ内で認識している4値のいずれとも一致しない場合のデフォルト
+    let conditionKey = CONDITION_INFO[productData.condition] ? productData.condition : 'USED_EXCELLENT';
+
+    // カテゴリごとに許可されるconditionは異なる（例: categoryId=112529は本番でNEW/USED_EXCELLENT/
+    // USED_ACCEPTABLE/FOR_PARTS_OR_NOT_WORKINGのみ許可でUSED_GOODは不可、と実際のAPIで確認済み）。
+    // 「AI判定が我々の4値に含まれるか」だけでは不十分なため、このカテゴリで実際に許可されている
+    // conditionIdの一覧を取得し、含まれていなければ近い候補に差し替える
+    // （取得自体に失敗した場合は従来通りconditionKeyのまま続行＝フェイルオープン）。
+    try {
+      const policyRes = await axios.get(
+        `${baseUrl}/sell/metadata/v1/marketplace/EBAY_US/get_item_condition_policies`,
+        {
+          headers: { Authorization: `Bearer ${userAccessToken}` },
+          params: { filter: `categoryIds:{${categoryId}}` },
+        }
+      );
+      const allowedIds = new Set(
+        (policyRes.data.itemConditionPolicies?.[0]?.itemConditions || []).map((c) => c.conditionId)
+      );
+      if (allowedIds.size > 0 && !allowedIds.has(CONDITION_INFO[conditionKey].id)) {
+        const fallback = FALLBACK_CONDITION_CANDIDATES.find((c) => allowedIds.has(c.id));
+        if (fallback) {
+          console.warn(
+            `カテゴリ${categoryId}はcondition="${conditionKey}"を許可していないため"${fallback.key}"に差し替えます`
+          );
+          conditionKey = fallback.key;
+        }
+      }
+    } catch (policyErr) {
+      console.error('商品状態ポリシーの取得に失敗しました（判定値のまま続行）:', policyErr?.response?.data || policyErr);
+    }
+
+    const condition = CONDITION_INFO[conditionKey].enum;
 
     // フロントエンドが送ってくるblob:（Supabaseアップロード失敗時のフォールバック等）は
     // eBayから取得不可なため、http(s)で始まらないURLは除外する。1件も残らなければ
@@ -692,8 +739,14 @@ app.post('/api/ebay/deletion-notification', async (req, res) => {
 
     const username = req.body?.notification?.data?.username;
     if (username) {
-      await deleteEbayConnectionsByUsername(username);
-      console.log(`eBayアカウント削除通知を受信し、連携を解除しました: ${username}`);
+      const deletedCount = await deleteEbayConnectionsByUsername(username);
+      if (deletedCount > 0) {
+        console.log(`eBayアカウント削除通知を受信し、連携を解除しました: ${username}（${deletedCount}件）`);
+      } else {
+        // 自アプリに接続されていないeBayアカウント（eBay側のテスト通知等）の場合はここに来る。
+        // 誤って「解除しました」と記録しないよう区別する。
+        console.log(`eBayアカウント削除通知を受信しましたが、自アプリに接続はありませんでした: ${username}`);
+      }
     } else {
       console.warn('eBay削除通知にusernameが含まれていませんでした:', JSON.stringify(req.body));
     }
