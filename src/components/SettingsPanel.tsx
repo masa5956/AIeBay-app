@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { getEbayAuthUrl, getEbayStatus, setActiveEbayEnv } from '../services/listingService';
 import type { EbayEnvironment, EbayStatus } from '../types/app';
 
@@ -18,19 +18,42 @@ export default function SettingsPanel({ useMockAnalysis, onToggleMockAnalysis, o
   const [isConnecting, setIsConnecting] = useState(false);
   const [isSwitching, setIsSwitching] = useState(false);
   const [actionError, setActionError] = useState('');
+  // 接続状態の取得に失敗した場合のエラー（trueの間は「確認中...」のまま固まらないよう
+  // エラー表示+再試行ボタンに切り替える。Renderの無料枠はスリープからの初回応答に
+  // 30秒前後かかることがあるため、それを想定して自動リトライも数回行う）
+  const [statusError, setStatusError] = useState(false);
   // タブをタップしただけで切り替わってしまう誤操作を防ぐため、実際の切替前に確認を挟む
   const [confirmingSwitchEnv, setConfirmingSwitchEnv] = useState<EbayEnvironment | null>(null);
+  // 自動リトライの試行回数（再レンダーを起こす必要が無いのでrefで管理）
+  const retryCountRef = useRef(0);
 
   const refreshStatus = () => {
-    getEbayStatus().then((data) => {
-      setStatus(data);
-      setSelectedEnv(data.activeEnv);
-    });
+    setStatusError(false);
+    getEbayStatus()
+      .then((data) => {
+        retryCountRef.current = 0;
+        setStatus(data);
+        setSelectedEnv(data.activeEnv);
+      })
+      .catch(() => {
+        setStatusError(true);
+      });
   };
 
   useEffect(() => {
     refreshStatus();
   }, []);
+
+  // 取得に失敗した場合、バックエンドのコールドスタート等を想定して間隔を空けながら
+  // 最大3回まで自動リトライする（3秒後→8秒後→15秒後）。それでも失敗したら手動の再試行に委ねる。
+  useEffect(() => {
+    if (!statusError || retryCountRef.current >= 3) return;
+    const delay = [3000, 8000, 15000][retryCountRef.current];
+    retryCountRef.current += 1;
+    const timer = setTimeout(refreshStatus, delay);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusError]);
 
   // eBayログイン用に新規タブを開いた後、そのタブでの操作完了後にこのタブへフォーカスが
   // 戻ったタイミングで接続状態を自動的に再取得する（新規タブ側でリロード等をしなくても
@@ -80,10 +103,14 @@ export default function SettingsPanel({ useMockAnalysis, onToggleMockAnalysis, o
       <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3 text-xs shadow-sm">
         <div className="flex justify-between items-center py-2 border-b">
           <span>現在の出品先</span>
-          {status === null ? (
-            <span className="text-slate-400">確認中...</span>
-          ) : (
+          {status !== null ? (
             <span className="text-emerald-600 font-bold">{ENV_LABEL[status.activeEnv]}</span>
+          ) : statusError ? (
+            <button onClick={refreshStatus} className="text-red-500 font-bold hover:underline">
+              取得に失敗しました（タップして再試行）
+            </button>
+          ) : (
+            <span className="text-slate-400">確認中...</span>
           )}
         </div>
         <div className="flex justify-between items-center py-2">
