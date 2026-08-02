@@ -10,13 +10,13 @@ export const GROQ_MODEL = process.env.GROQ_MODEL || 'meta-llama/llama-4-scout-17
 
 // GroqのレスポンスにMarkdownのコードフェンスや前置き文が混ざることがあるため、緩くJSON部分を抽出する。
 // 一部のモデル（例: qwen/qwen3.6-27b等の推論モデル）は本文の前に<think>...</think>で思考過程を
-// 出力することがあり、その中に例示・下書きのJSON片が含まれることもあるため、素朴な
-// /\{[\s\S]*\}/ の貪欲マッチだけでは思考過程の断片と最終回答を誤って一つに繋げてパースに失敗する。
-// そのため<think>ブロックを丸ごと除去してから抽出する。
+// 出力することがある。以前は<think>ブロックを正規表現で除去していたが、思考が長く出力トークン上限に
+// 収まりきらず閉じタグ</think>の手前で応答が打ち切られるケースがあり、その場合は除去しきれず失敗していた。
+// そのため呼び出し側で reasoning_format: 'hidden' を指定し、Groq API自体に思考ブロックを応答へ
+// 含めさせない（最終回答のみ返す）方式に変更した。ここではMarkdownフェンス除去のみ行う。
 function parseJsonLoose(text) {
   const raw = (text || '').trim();
-  const withoutThinking = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-  const withoutFence = withoutThinking.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+  const withoutFence = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
   try {
     return JSON.parse(withoutFence);
   } catch {
@@ -32,6 +32,10 @@ export async function generateJson(promptText) {
     model: GROQ_MODEL,
     messages: [{ role: 'user', content: promptText }],
     response_format: { type: 'json_object' },
+    // 推論モデルの<think>ブロックを応答に含めない（思考自体は内部で行われるため、
+    // 打ち切られないよう出力上限にも余裕を持たせる）
+    reasoning_format: 'hidden',
+    max_completion_tokens: 4096,
   });
   return parseJsonLoose(response.choices[0]?.message?.content);
 }
@@ -56,6 +60,10 @@ export async function generateImageJson(promptText, images) {
         ],
       },
     ],
+    // 推論モデルの<think>ブロックを応答に含めない（思考自体は内部で行われるため、
+    // 打ち切られないよう出力上限にも余裕を持たせる）
+    reasoning_format: 'hidden',
+    max_completion_tokens: 4096,
   });
   return parseJsonLoose(response.choices[0]?.message?.content);
 }
