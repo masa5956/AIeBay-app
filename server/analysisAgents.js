@@ -1,4 +1,5 @@
 import { generateJson, generateImageJson } from './aiProvider.js';
+import { generateGroundedJson } from './geminiClient.js';
 
 // =================================================================
 // 商品状態・欠陥検出エージェント（画像を見て状態を厳しく査定する）
@@ -22,9 +23,52 @@ JSON形式のみで出力:
 }
 
 // =================================================================
+// 市場価格調査エージェント（Gemini + Google検索グラウンディング）
+// eBay Browse APIのキーワード完全一致検索は、AIが生成したタイトルがブランド/型番を
+// 誤認識・一般化した場合に0件になりやすく「取得できない」ケースが多かった。この関数は
+// eBayに限らずインターネット全体を検索させ、商品状態も踏まえてAI自身に相場を判断させる
+// ため、より頑健に価格を返せる（常にGeminiを使う。Groqにはグラウンディング機能が無いため
+// TEXT_AI_PROVIDER設定に関わらずgeminiClient.jsを直接呼ぶ）。
+// index.js側ではこれを主経路とし、失敗時のみeBay Browse APIベースの旧経路へフォールバックする。
+// =================================================================
+export async function runMarketResearchAgent({ title, brand, model, condition, conditionAssessment }) {
+  const conditionNote = conditionAssessment
+    ? `AIによる状態診断: スコア${conditionAssessment.conditionScore}/100（${conditionAssessment.conditionLabel}）、` +
+      `検出された難あり点: ${(conditionAssessment.defects || []).join('、') || 'なし'}`
+    : `出品予定の状態区分: ${condition || '不明'}`;
+
+  const prompt = `あなたはeBay出品の価格アドバイザーです。以下の商品について、インターネット検索で現在の実勢相場を調査し、
+商品状態を考慮した適正なUSD価格帯を判断してください。
+
+商品情報:
+- タイトル: ${title}
+- ブランド: ${brand || '不明'}
+- 型番: ${model || '不明'}
+- ${conditionNote}
+
+eBayに限らず、メルカリ・Yahoo!オークション・Amazon・一般的な小売サイトなど、検索で見つかる実際の
+販売実績・出品価格を幅広く参照してください（日本円の価格は判断時点のおおよその為替レートでUSDに
+換算してください）。商品状態が良いほど価格は高め、悪いほど低めに調整してください。
+類似商品が全く見つからない場合は、商品カテゴリの一般的な相場から妥当な推測値を出してください
+（0円/0ドルにはしないでください）。
+
+出力は前置きや説明、Markdown装飾を一切付けず、以下のJSON形式のみを出力してください:
+{
+  "min_price": number (USD, 相場の下限),
+  "max_price": number (USD, 相場の上限),
+  "suggested_price": number (USD, 状態を考慮した推奨出品価格),
+  "market_trend": { "demandLevel": "High、Medium、Lowのいずれか", "trendNote": "需要・価格帯の傾向についての1〜2文の日本語コメント" },
+  "competitor_suggestions": { "suggestions": ["具体的な改善提案を日本語で2〜4個"], "competitivePriceNote": "価格の妥当性についての1文コメント（日本語）" }
+}`;
+
+  return generateGroundedJson(prompt);
+}
+
+// =================================================================
 // 市場トレンド・需要分析エージェント（現在のアクティブ出品状況から需要シグナルを推定）
 // 注意: eBay Browse APIはアクティブな出品のみを返すため、これは売却実績ではなく
 // 「現在の競合出品状況」に基づく推定である点をUI上にも明示すること。
+// runMarketResearchAgent失敗時のフォールバック経路でのみ使用する。
 // =================================================================
 export async function runMarketTrendAgent(keywords, items) {
   const noDataNote = items.length === 0

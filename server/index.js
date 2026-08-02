@@ -23,7 +23,7 @@ import { getActiveEbayEnv, setActiveEbayEnv } from './userSettingsRepository.js'
 import { setupEbayPoliciesForToken } from './setupPolicies.js';
 import { requireAuth } from './authMiddleware.js';
 import { AI_PROVIDER, generateImageJson } from './aiProvider.js';
-import { runConditionAgent, runMarketTrendAgent, runCompetitorAgent, scoreListing } from './analysisAgents.js';
+import { runConditionAgent, runMarketResearchAgent, runMarketTrendAgent, runCompetitorAgent, scoreListing } from './analysisAgents.js';
 import { supabase, PRODUCT_IMAGES_BUCKET } from './supabaseClient.js';
 import { saveListing, getRecentListings, getSalesSummary, getAnalytics, getListingByListingId } from './listingsRepository.js';
 import { removeOutliersByIQR } from './priceStats.js';
@@ -191,97 +191,106 @@ app.post('/api/estimate-price', requireAuth, async (req, res) => {
       return res.status(400).json({ error: '検索キーワードが必要です。' });
     }
 
-    // 価格調査(Browse API)は出品先環境(Sandbox/Production)とは切り離し、常に本番の実在庫データを使う。
-    // SandboxのBrowse APIはテスト用のごく僅かなダミーデータしか無く、実商品名で検索しても
-    // ほぼ確実に0件になり価格が常に$0になってしまうため。Browse APIはユーザー認可不要の
-    // app tokenで読み取るだけなので、出品先環境と異なっていても問題ない。
-    // Production未設定（EBAY_PRODUCTION_CLIENT_ID等が空）の場合のみ、現在の出品先環境で代用する。
-    const productionConfig = getEbayEnvConfig('PRODUCTION');
-    const priceResearchEnv = (productionConfig.clientId && productionConfig.clientSecret)
-      ? 'PRODUCTION'
-      : await getActiveEbayEnv(req.userId);
-    const { baseUrl } = getEbayEnvConfig(priceResearchEnv);
-    const appToken = await getAppAccessToken(priceResearchEnv);
-
-    // Browse API の`q`はAIが生成した長いSEOタイトルそのままだと、ブランド・型番をAIが誤認識/
-    // 一般化した場合（例: "Unbranded"寄りの表現）に0件になりやすい。0件のときは段階的に検索語を
-    // 単純化して再検索する（brand+model → タイトル先頭の数語）。再検索は0件だった場合のみ発生する
-    // ため、通常ケースのレイテンシには影響しない。
+    const draft = productDraft || { title: keywords };
     const brand = (productDraft?.aspects || []).find((a) => a.key === 'Brand')?.value || '';
     const model = (productDraft?.aspects || []).find((a) => a.key === 'Model')?.value || '';
-    const brandModel = `${brand} ${model}`.trim();
-    const shortTitle = keywords.split(/\s+/).slice(0, 4).join(' ');
-    const candidateQueries = [keywords, brandModel, shortTitle].filter(
-      (q, i, arr) => q && arr.indexOf(q) === i // 空文字・重複を除去
-    );
 
-    let items = [];
-    let usedQuery = keywords;
-    for (const q of candidateQueries) {
-      const searchResponse = await axios.get(
-        `${baseUrl}/buy/browse/v1/item_summary/search`,
-        {
-          headers: {
-            Authorization: `Bearer ${appToken}`,
-            'X-EBAY-C-MARKETPLACE-ID': 'EBAY_US',
-          },
-          params: {
-            q,
-            limit: 50,
-            filter: condition && CONDITION_INFO[condition]
-              ? `buyingOptions:{FIXED_PRICE},conditionIds:{${CONDITION_INFO[condition].id}}`
-              : 'buyingOptions:{FIXED_PRICE}',
-          },
-        }
-      );
-      items = searchResponse.data.itemSummaries || [];
-      usedQuery = q;
-      if (items.length > 0) break;
-    }
-    if (items.length === 0) {
-      console.warn(`価格調査: 検索語を段階的に変えても0件でした（試行順: ${candidateQueries.join(' / ')}）`);
-    } else if (usedQuery !== keywords) {
-      console.log(`価格調査: 元のキーワードでは0件のため"${usedQuery}"で再検索し${items.length}件ヒットしました`);
-    }
-    const prices = items
-      .map((item) => parseFloat(item.price?.value || '0'))
-      .filter((p) => p > 0)
-      .sort((a, b) => a - b);
-
-    // 類似商品が1件も見つからない場合でも価格を0にするだけで、市場トレンド・競合比較・
-    // 総合スコアの計算自体は必ず行う（以前はここで即returnしていたため、ブランド・型番を
-    // AIが読み取れず検索語が"Unbranded Does not apply"のようになった場合に分析全体が
-    // 空になってしまっていた）。
+    // 価格調査は、Gemini + Google検索グラウンディングによるインターネット全体の相場調査を主経路とする。
+    // eBay Browse APIのキーワード完全一致検索は、AIが生成したタイトルがブランド/型番を誤認識・
+    // 一般化した場合（例: "Unbranded"寄りの表現）に0件になりやすく「取得できない」ケースが多かった。
+    // Web検索グラウンディングならAI自身が広く相場を推測できるため、この問題が起きにくい。
     let min_price = 0;
     let max_price = 0;
     let suggested_price = 0;
-    if (prices.length > 0) {
-      // IQRアルゴリズムで外れ値を除去してから統計計算（中央値・最安・最高）
-      const filteredPrices = removeOutliersByIQR(prices);
-      min_price = filteredPrices[0];
-      max_price = filteredPrices[filteredPrices.length - 1];
-      suggested_price = filteredPrices[Math.floor(filteredPrices.length / 2)];
-    }
-
-    // 市場トレンド・競合比較エージェントに渡す簡易出品一覧（タイトル・価格のみ）
-    const simplifiedItems = items
-      .slice(0, 20)
-      .map((item) => ({ title: item.title, price: parseFloat(item.price?.value || '0') }))
-      .filter((item) => item.price > 0);
-    const draft = productDraft || { title: keywords };
-
-    // 市場トレンド分析・競合比較エージェントを並列実行（高速レスポンスのため）。
-    // AIプロバイダー側の障害（APIキー不正・レート制限等）でここが失敗しても、既に計算済みの
-    // 価格統計(suggested_price等)まで巻き添えで失わないよう、個別にtry/catchして続行する。
     let marketTrend;
     let competitorSuggestions;
     try {
-      [marketTrend, competitorSuggestions] = await Promise.all([
-        runMarketTrendAgent(keywords, simplifiedItems),
-        runCompetitorAgent(draft, simplifiedItems.slice(0, 5)),
-      ]);
-    } catch (agentError) {
-      console.error('市場トレンド/競合比較エージェントの実行に失敗しました（価格のみ返します）:', agentError?.response?.data || agentError);
+      const research = await runMarketResearchAgent({ title: keywords, brand, model, condition, conditionAssessment });
+      min_price = Number(research.min_price) || 0;
+      max_price = Number(research.max_price) || 0;
+      suggested_price = Number(research.suggested_price) || 0;
+      marketTrend = research.market_trend;
+      competitorSuggestions = research.competitor_suggestions;
+    } catch (researchError) {
+      console.error('Gemini検索による価格調査に失敗しました。eBay Browse APIへフォールバックします:', researchError?.response?.data || researchError);
+    }
+
+    // フォールバック: Gemini検索調査が失敗した、または有効な価格を返さなかった場合のみ、
+    // 従来のeBay Browse APIベースの調査を行う（Sandboxはダミーデータしか無いため常にProductionを使う。
+    // Production未設定の場合のみ現在の出品先環境で代用）。
+    if (suggested_price === 0) {
+      const productionConfig = getEbayEnvConfig('PRODUCTION');
+      const priceResearchEnv = (productionConfig.clientId && productionConfig.clientSecret)
+        ? 'PRODUCTION'
+        : await getActiveEbayEnv(req.userId);
+      const { baseUrl } = getEbayEnvConfig(priceResearchEnv);
+      const appToken = await getAppAccessToken(priceResearchEnv);
+
+      // `q`が長いSEOタイトルそのままだと0件になりやすいため、0件のときは段階的に検索語を
+      // 単純化して再検索する（brand+model → タイトル先頭の数語）。
+      const brandModel = `${brand} ${model}`.trim();
+      const shortTitle = keywords.split(/\s+/).slice(0, 4).join(' ');
+      const candidateQueries = [keywords, brandModel, shortTitle].filter(
+        (q, i, arr) => q && arr.indexOf(q) === i // 空文字・重複を除去
+      );
+
+      let items = [];
+      let usedQuery = keywords;
+      for (const q of candidateQueries) {
+        const searchResponse = await axios.get(
+          `${baseUrl}/buy/browse/v1/item_summary/search`,
+          {
+            headers: {
+              Authorization: `Bearer ${appToken}`,
+              'X-EBAY-C-MARKETPLACE-ID': 'EBAY_US',
+            },
+            params: {
+              q,
+              limit: 50,
+              filter: condition && CONDITION_INFO[condition]
+                ? `buyingOptions:{FIXED_PRICE},conditionIds:{${CONDITION_INFO[condition].id}}`
+                : 'buyingOptions:{FIXED_PRICE}',
+            },
+          }
+        );
+        items = searchResponse.data.itemSummaries || [];
+        usedQuery = q;
+        if (items.length > 0) break;
+      }
+      if (items.length === 0) {
+        console.warn(`価格調査フォールバック: 検索語を段階的に変えても0件でした（試行順: ${candidateQueries.join(' / ')}）`);
+      } else if (usedQuery !== keywords) {
+        console.log(`価格調査フォールバック: 元のキーワードでは0件のため"${usedQuery}"で再検索し${items.length}件ヒットしました`);
+      }
+      const prices = items
+        .map((item) => parseFloat(item.price?.value || '0'))
+        .filter((p) => p > 0)
+        .sort((a, b) => a - b);
+
+      if (prices.length > 0) {
+        // IQRアルゴリズムで外れ値を除去してから統計計算（中央値・最安・最高）
+        const filteredPrices = removeOutliersByIQR(prices);
+        min_price = filteredPrices[0];
+        max_price = filteredPrices[filteredPrices.length - 1];
+        suggested_price = filteredPrices[Math.floor(filteredPrices.length / 2)];
+      }
+
+      // 市場トレンド・競合比較エージェントに渡す簡易出品一覧（タイトル・価格のみ）
+      const simplifiedItems = items
+        .slice(0, 20)
+        .map((item) => ({ title: item.title, price: parseFloat(item.price?.value || '0') }))
+        .filter((item) => item.price > 0);
+
+      // AIプロバイダー側の障害（APIキー不正・レート制限等）でここが失敗しても、既に計算済みの
+      // 価格統計(suggested_price等)まで巻き添えで失わないよう、個別にtry/catchして続行する。
+      try {
+        [marketTrend, competitorSuggestions] = await Promise.all([
+          runMarketTrendAgent(keywords, simplifiedItems),
+          runCompetitorAgent(draft, simplifiedItems.slice(0, 5)),
+        ]);
+      } catch (agentError) {
+        console.error('市場トレンド/競合比較エージェントの実行に失敗しました（価格のみ返します）:', agentError?.response?.data || agentError);
+      }
     }
 
     // 総合判定スコアはLLM呼び出しではなく決定的な計算（高速・低コスト・再現性のため）
