@@ -68,7 +68,7 @@ HTMLレスポンスへのユーザー入力の埋め込みは`escapeHtml()`で�
 | Method / Path | 概要 |
 |---|---|
 | `POST /api/analyze-image` | 画像1〜8枚（`multipart/form-data`の`images`フィールド、複数可）を受け取り、`aiProvider.js`経由でGemini/Groqに全画像まとめてタイトル・ブランド・型番・状態・説明文・aspectsを1つのJSONとして抽出させる。商品状態エージェント（`runConditionAgent`、同じく複数画像対応）とSupabase画像アップロード（`uploadProductImage`を全枚数分）を`Promise.all`で並列実行し、`imageUrls`配列を返す |
-| `POST /api/estimate-price` | eBay Browse APIで類似商品検索→IQR外れ値除去→市場トレンド/競合比較エージェント→決定的スコア（`scoreListing`）算出。類似商品が0件でも価格を0にするだけで市場トレンド・競合比較・スコア計算自体は必ず実行する（検索キーワードは`analyzeImageWithAI`側でtitleを優先しており、以前はbrand+modelが"Unbranded Does not apply"等になり0件ヒットで分析全体が空になる不具合があった） |
+| `POST /api/estimate-price` | eBay Browse APIで類似商品検索→IQR外れ値除去→市場トレンド/競合比較エージェント→決定的スコア（`scoreListing`）算出。**Browse APIの検索は出品先環境(Sandbox/Production)とは切り離し、`EBAY_PRODUCTION_CLIENT_ID`等が設定済みなら常にPRODUCTION側で行う**（Sandboxには実商品データがほぼ無く、実商品名で検索してもほぼ確実に0件→価格が常に$0になるため。app tokenでの読み取り専用アクセスなので出品先環境と異なっていても問題ない。Production未設定時のみ現在の出品先環境にフォールバック）。類似商品が0件でも価格を0にするだけで市場トレンド・競合比較・スコア計算自体は必ず実行する（検索キーワードは`analyzeImageWithAI`側でtitleを優先） |
 | `POST /api/publish-ebay` | `ebay_connections`のBusiness Policy ID・出荷元ロケーションを使いSell Inventory API（Item→Offer→Publish）で出品。`productData.imageUrls`（複数可）をそのままeBayの`product.imageUrls`に渡す（http(s)以外のURLは除外、1件も無ければプレースホルダー1枚にフォールバック）。必須Item Specifics（Brand/Color/Connectivity/Model/Type、`categoryId=112529`固定）を既定値で補完。成功後`saveListing()`で履歴保存（自アプリの履歴には代表画像1枚(`imageUrls[0]`)のみ保存） |
 | `GET /api/listings` | 自分の最近の出品一覧・売上サマリー（ホーム用） |
 | `GET /api/listings/:id` | 1件分の全項目（説明文・aspects含む、詳細モーダル用） |
@@ -84,7 +84,7 @@ HTMLレスポンスへのユーザー入力の埋め込みは`escapeHtml()`で�
 | ファイル | 役割 |
 |---|---|
 | [authMiddleware.js](server/authMiddleware.js) | `requireAuth`。Supabaseアクセストークン検証→`req.userId` |
-| [aiProvider.js](server/aiProvider.js) | `.env`の`AI_PROVIDER`(`gemini`/`groq`)で[geminiClient.js](server/geminiClient.js)/[groqClient.js](server/groqClient.js)切替。`generateJson()`/`generateImageJson(promptText, images)`を公開、AI呼び出しは必ずこれ経由。`images`は`[{base64Image, mimeType}, ...]`（1枚以上）で、複数枚を1回のAI呼び出しにまとめて渡し1つの結果に統合させる |
+| [aiProvider.js](server/aiProvider.js) | `.env`の`AI_PROVIDER`(`gemini`/`groq`)で画像解析(vision)用エンジンを、`TEXT_AI_PROVIDER`（未設定時`AI_PROVIDER`と同じ）でテキストのみのエージェント用エンジンを独立に選択できる。[geminiClient.js](server/geminiClient.js)/[groqClient.js](server/groqClient.js)を切替。`generateImageJson(promptText, images)`（vision、`AI_PROVIDER`側）と`generateJson()`（テキストのみ、`TEXT_AI_PROVIDER`側）を公開、AI呼び出しは必ずこれ経由。`images`は`[{base64Image, mimeType}, ...]`（1枚以上）で、複数枚を1回のAI呼び出しにまとめて渡し1つの結果に統合させる。`TEXT_AI_PROVIDER=groq`にすると1出品あたりのGemini呼び出しが4回→2回に減る（`runMarketTrendAgent`/`runCompetitorAgent`はvision不要なためGroqに逃がせる） |
 | [analysisAgents.js](server/analysisAgents.js) | `runConditionAgent(images)`（状態・欠陥検出、複数枚対応）、`runMarketTrendAgent`/`runCompetitorAgent`（市場トレンド・競合比較。類似出品0件時も空リストとして必ず実行しdemandLevel等を返す）、`scoreListing`（LLM不使用の決定的スコア計算） |
 | [priceStats.js](server/priceStats.js) | IQR外れ値除去`removeOutliersByIQR()` |
 | [ebayAuth.js](server/ebayAuth.js) | eBay OAuth共通処理。`getEbayEnvConfig(environment)`が`'SANDBOX'`/`'PRODUCTION'`ごとのbaseUrl/authUrl/クライアントID等（`EBAY_SANDBOX_*`/`EBAY_PRODUCTION_*`）を解決し、`getAppAccessToken`/`getUserAccessToken`/`exchangeAuthCodeForTokens`/`getEbayUsername`は全て`environment`引数必須。`getAppAccessToken`/`getUserAccessToken`は[ebayTokenCache.js](server/ebayTokenCache.js)でトークンをキャッシュし、有効期限内は再取得（ネットワーク往復）をスキップする。`getUserAccessToken(userId, environment)`は`ebay_connections`のrefresh_tokenで取得（`userId`省略時`.env`の`EBAY_USER_REFRESH_TOKEN`、`setup:policies`ローカル専用、`environment`省略時`.env`の`EBAY_ENV`）。`USER_SCOPES`(出品/Policy用、refresh grantで常用)と`AUTH_SCOPES`(初回同意専用、`commerce.identity.readonly`追加)を分離—混ぜると既存接続の更新が未同意スコープエラーで壊れるため |
@@ -206,7 +206,7 @@ Sandbox/Productionは設定タブから即時切替可能（1ユーザーが両�
 | サーバー | `PORT` / `ALLOWED_ORIGINS`（CORS許可オリジンの追加、カンマ区切り。localhost:5173と本番Vercel URLは常時許可） |
 | Supabase(バックエンド) | `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` |
 | Supabase(フロントエンド、ビルド埋込) | `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` |
-| AI | `AI_PROVIDER` / `GEMINI_API_KEY` / `GEMINI_MODEL` / `GROQ_API_KEY` / `GROQ_MODEL` |
+| AI | `AI_PROVIDER` / `TEXT_AI_PROVIDER`（任意、テキスト専用エージェントだけ別エンジンにする場合） / `GEMINI_API_KEY` / `GEMINI_MODEL` / `GROQ_API_KEY` / `GROQ_MODEL` |
 | eBay認証 | `EBAY_SANDBOX_CLIENT_ID` / `EBAY_SANDBOX_CLIENT_SECRET` / `EBAY_SANDBOX_RU_NAME` / `EBAY_PRODUCTION_CLIENT_ID` / `EBAY_PRODUCTION_CLIENT_SECRET` / `EBAY_PRODUCTION_RU_NAME`（Production未取得ならSandboxのみ空でなく設定すればよい） / `EBAY_ENV` / `EBAY_USER_REFRESH_TOKEN`(いずれも`setup:policies`ローカル専用) |
 | eBay出品設定 | `EBAY_MERCHANT_LOCATION_KEY` / `EBAY_FULFILLMENT_POLICY_ID` / `EBAY_RETURN_POLICY_ID`(いずれも`setup:policies`ローカル専用) / `EBAY_PAYMENT_POLICY_ID` |
 | 出荷元住所 | `EBAY_LOCATION_ADDRESS_LINE1` / `EBAY_LOCATION_CITY` / `EBAY_LOCATION_STATE_OR_PROVINCE` / `EBAY_LOCATION_POSTAL_CODE` / `EBAY_LOCATION_COUNTRY` |

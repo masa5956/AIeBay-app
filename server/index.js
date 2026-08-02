@@ -180,9 +180,17 @@ app.post('/api/estimate-price', requireAuth, async (req, res) => {
       return res.status(400).json({ error: '検索キーワードが必要です。' });
     }
 
-    const environment = await getActiveEbayEnv(req.userId);
-    const { baseUrl } = getEbayEnvConfig(environment);
-    const appToken = await getAppAccessToken(environment);
+    // 価格調査(Browse API)は出品先環境(Sandbox/Production)とは切り離し、常に本番の実在庫データを使う。
+    // SandboxのBrowse APIはテスト用のごく僅かなダミーデータしか無く、実商品名で検索しても
+    // ほぼ確実に0件になり価格が常に$0になってしまうため。Browse APIはユーザー認可不要の
+    // app tokenで読み取るだけなので、出品先環境と異なっていても問題ない。
+    // Production未設定（EBAY_PRODUCTION_CLIENT_ID等が空）の場合のみ、現在の出品先環境で代用する。
+    const productionConfig = getEbayEnvConfig('PRODUCTION');
+    const priceResearchEnv = (productionConfig.clientId && productionConfig.clientSecret)
+      ? 'PRODUCTION'
+      : await getActiveEbayEnv(req.userId);
+    const { baseUrl } = getEbayEnvConfig(priceResearchEnv);
+    const appToken = await getAppAccessToken(priceResearchEnv);
 
     // Browse API による同一・類似商品の価格検索
     const searchResponse = await axios.get(
