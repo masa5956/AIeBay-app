@@ -38,7 +38,23 @@ export async function getRecentListings(userId, limit = 20) {
   if (!supabase) return []; // Supabase未設定時は空一覧を返す
   const { data, error } = await supabase
     .from('listings')
-    .select('listing_id, title, price, status, image_url, created_at')
+    .select('listing_id, title, price, status, image_url, category, created_at')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return data;
+}
+
+// 「すべて見る」検索画面向け: ユーザーの全出品を取得する（description/aspectsは除く軽量版）。
+// キーワード/カテゴリ検索はユーザー入力をそのままPostgRESTのor()フィルタ文字列に埋め込むと
+// フィルタ構文インジェクションの余地があるため、ここでは絞り込まずに取得だけ行い、
+// 検索語によるフィルタリングはindex.js側でJavaScript配列操作として行う。
+export async function getAllListings(userId, limit = 500) {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from('listings')
+    .select('listing_id, title, price, status, image_url, category, created_at')
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
     .limit(limit);

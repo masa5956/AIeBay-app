@@ -13,6 +13,10 @@ export default function AuthScreen() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    // ログイン成功後、フォーカスされたまま入力欄がアンマウントされると、モバイルSafari等が
+    // フォーカスズームをリセットできず画面がズームしたまま固定されることがあるため、
+    // 非同期処理を始める前に明示的にフォーカスを外しキーボード/ズームを閉じておく
+    (document.activeElement as HTMLElement | null)?.blur();
     setIsLoading(true);
     setError('');
 

@@ -17,11 +17,11 @@ export interface RecentListing {
   status: 'ACTIVE' | 'SOLD' | 'DRAFT';
   date: string;
   imageUrl?: string;
+  category: string;
 }
 
 // 出品詳細画面用（最近の出品一覧をタップした際に取得する全項目）
 export interface ListingDetail extends RecentListing {
-  category: string;
   description: string;
   aspects: Record<string, string[]>;
 }

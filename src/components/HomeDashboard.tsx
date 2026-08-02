@@ -7,6 +7,7 @@ interface HomeDashboardProps {
   isLoading: boolean;
   onStartListing: () => void;
   onSelectListing: (id: string) => void;
+  onViewAllListings: () => void;
 }
 
 // ホームタブ: 売上ダッシュボード + 最近の出品一覧。
@@ -18,6 +19,7 @@ export default function HomeDashboard({
   isLoading,
   onStartListing,
   onSelectListing,
+  onViewAllListings,
 }: HomeDashboardProps) {
   return (
     <div className="space-y-6">
@@ -88,14 +90,20 @@ export default function HomeDashboard({
         <span>写真から出品を作成する</span>
       </button>
 
-      {/* 最近の出品リスト */}
+      {/* 最近の出品リスト。出品数が増えても親(main)全体のスクロールに影響しないよう、
+          このリスト自体の高さを画面の目安サイズに収めて内側でスクロールさせる */}
       <div className="space-y-3">
         <div className="flex justify-between items-center">
           <h3 className="text-sm font-bold text-slate-800">最近の出品</h3>
-          <span className="text-xs text-blue-600 font-semibold cursor-pointer hover:underline">すべて見る</span>
+          <button
+            onClick={onViewAllListings}
+            className="text-xs text-blue-600 font-semibold hover:underline"
+          >
+            すべて見る
+          </button>
         </div>
 
-        <div className="space-y-2">
+        <div className="space-y-2 max-h-[45vh] overflow-y-auto pr-0.5">
           {isLoading ? (
             [0, 1, 2].map((i) => (
               <div key={i} className="animate-pulse bg-white border border-slate-200 rounded-xl p-3 h-14" />

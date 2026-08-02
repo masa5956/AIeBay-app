@@ -25,7 +25,7 @@ import { requireAuth } from './authMiddleware.js';
 import { AI_PROVIDER, TEXT_AI_PROVIDER, generateImageJson } from './aiProvider.js';
 import { runConditionAgent, runMarketResearchAgent, runMarketTrendAgent, runCompetitorAgent, scoreListing } from './analysisAgents.js';
 import { supabase, PRODUCT_IMAGES_BUCKET } from './supabaseClient.js';
-import { saveListing, getRecentListings, getSalesSummary, getAnalytics, getListingByListingId } from './listingsRepository.js';
+import { saveListing, getRecentListings, getAllListings, getSalesSummary, getAnalytics, getListingByListingId } from './listingsRepository.js';
 import { removeOutliersByIQR } from './priceStats.js';
 import { createOAuthState, consumeOAuthState } from './oauthStateStore.js';
 import { verifyEbayNotificationSignature } from './ebayNotificationVerifier.js';
@@ -539,12 +539,49 @@ app.get('/api/listings', requireAuth, async (req, res) => {
       status: row.status,
       date: row.created_at.split('T')[0],
       imageUrl: row.image_url || undefined,
+      category: row.category || 'Other',
     }));
 
     return res.json({ recentListings, salesSummary });
   } catch (error) {
     console.error('出品履歴の取得に失敗しました:', error);
     return res.status(500).json({ error: '出品履歴の取得に失敗しました。' });
+  }
+});
+
+// =================================================================
+// 出品検索エンドポイント (/api/listings/search) — ホームの「すべて見る」画面用。
+// タイトル・カテゴリを対象にキーワードで絞り込む（大文字小文字を区別しない部分一致）。
+// 注意: このルートは/api/listings/:idより前で定義する必要がある
+// （Expressは定義順に一致判定するため、後だと"search"が:idとして誤って一致してしまう）。
+// =================================================================
+app.get('/api/listings/search', requireAuth, async (req, res) => {
+  try {
+    const keyword = String(req.query.q || '').trim().toLowerCase();
+    const allListings = await getAllListings(req.userId);
+
+    const filtered = keyword
+      ? allListings.filter(
+          (row) =>
+            (row.title || '').toLowerCase().includes(keyword) ||
+            (row.category || '').toLowerCase().includes(keyword)
+        )
+      : allListings;
+
+    const listings = filtered.map((row) => ({
+      id: row.listing_id,
+      title: row.title,
+      price: Number(row.price),
+      status: row.status,
+      date: row.created_at.split('T')[0],
+      imageUrl: row.image_url || undefined,
+      category: row.category || 'Other',
+    }));
+
+    return res.json({ listings });
+  } catch (error) {
+    console.error('出品検索に失敗しました:', error);
+    return res.status(500).json({ error: '出品検索に失敗しました。' });
   }
 });
 

@@ -10,6 +10,7 @@ import Toast, { type Feedback } from './components/Toast';
 import CancelConfirmDialog from './components/CancelConfirmDialog';
 import StepperHeader from './components/StepperHeader';
 import HomeDashboard from './components/HomeDashboard';
+import AllListingsScreen from './components/AllListingsScreen';
 import SettingsPanel from './components/SettingsPanel';
 import Step1_ImageUpload from './components/Step1_ImageUpload';
 import Step2_MetadataEdit from './components/Step2_MetadataEdit';
@@ -56,6 +57,8 @@ export default function App() {
   const [isCancelConfirmOpen, setIsCancelConfirmOpen] = useState<boolean>(false);
   // 最近の出品からタップして詳細モーダルを開いている出品のID（未選択時はnull）
   const [selectedListingId, setSelectedListingId] = useState<string | null>(null);
+  // ホームの「すべて見る」から開く、全出品検索画面を表示中かどうか
+  const [showAllListings, setShowAllListings] = useState<boolean>(false);
   // 開発者向け: ONの間はAI解析をモックデータで代用しGemini/Groqのクォータを消費しない（出品自体は実APIを使用）
   const [useMockAnalysis, setUseMockAnalysis] = useState<boolean>(
     () => localStorage.getItem('ebay-ai-lister-use-mock-analysis') === 'true'
@@ -212,8 +215,11 @@ export default function App() {
 
   return (
     <div className="min-h-screen min-h-dvh bg-slate-900 text-slate-100 flex flex-col items-center">
-      {/* スマホ画面枠 */}
-      <div className="w-full max-w-md bg-slate-50 text-slate-800 min-h-screen min-h-dvh flex flex-col justify-between relative shadow-2xl pb-20">
+      {/* スマホ画面枠。h-screen/h-dvhで高さをビューポートに固定し中身では伸ばさない
+          （min-h-*のままだと出品数が増えるほど枠自体が縦に伸び、absolute配置のBottomNavが
+          その分下へ押し出されてしまっていたため）。中身のスクロールはmain/ウィザード側の
+          overflow-y-autoに任せ、枠自体はoverflow-hiddenでページ全体のスクロールを防ぐ */}
+      <div className="w-full max-w-md bg-slate-50 text-slate-800 h-screen h-dvh flex flex-col relative shadow-2xl overflow-hidden">
         <Toast feedback={feedback} onClose={() => setFeedback(null)} />
         <CancelConfirmDialog
           open={isCancelConfirmOpen}
@@ -228,7 +234,7 @@ export default function App() {
 
         {/* ================= 出品フローモーダル表示時 ================= */}
         {isListingMode ? (
-          <div className="p-5 space-y-6 flex-1 bg-white">
+          <div className="p-5 space-y-6 flex-1 bg-white overflow-y-auto">
             <header className="flex justify-between items-center border-b pb-3">
               <button
                 onClick={() => setIsCancelConfirmOpen(true)}
@@ -276,9 +282,11 @@ export default function App() {
               <Step4_Preview productData={productData} onBack={() => goToStep(3)} onPublish={handlePublish} />
             )}
           </div>
+        ) : showAllListings ? (
+          <AllListingsScreen onClose={() => setShowAllListings(false)} onSelectListing={setSelectedListingId} />
         ) : (
           /* ================= 通常メイン画面（タブ切り替え） ================= */
-          <main className="p-4 space-y-6 flex-1 overflow-y-auto">
+          <main className="p-4 space-y-6 flex-1 overflow-y-auto pb-20">
             {activeTab === 'home' && (
               <HomeDashboard
                 salesSummary={salesSummary}
@@ -286,6 +294,7 @@ export default function App() {
                 isLoading={isListingsLoading}
                 onStartListing={() => setIsListingMode(true)}
                 onSelectListing={setSelectedListingId}
+                onViewAllListings={() => setShowAllListings(true)}
               />
             )}
             {activeTab === 'analytics' && (
@@ -309,7 +318,7 @@ export default function App() {
           </main>
         )}
 
-        {!isListingMode && <BottomNav activeTab={activeTab} onChangeTab={setActiveTab} />}
+        {!isListingMode && !showAllListings && <BottomNav activeTab={activeTab} onChangeTab={setActiveTab} />}
       </div>
     </div>
   );

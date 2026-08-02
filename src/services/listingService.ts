@@ -171,6 +171,19 @@ export const getListings = async (): Promise<{ recentListings: RecentListing[]; 
   return await response.json();
 };
 
+// 4b. ホームの「すべて見る」画面向け: タイトル・カテゴリでキーワード検索した出品一覧を取得する
+//     （queryが空文字の場合は全件を返す）
+export const searchListings = async (query: string): Promise<RecentListing[]> => {
+  const response = await fetch(`${BACKEND_URL}/listings/search?q=${encodeURIComponent(query)}`, {
+    headers: await authHeaders(),
+  });
+  if (!response.ok) {
+    throw new Error('出品検索に失敗しました');
+  }
+  const data = await response.json();
+  return data.listings;
+};
+
 // 5. 分析タブ向けの月別出品額推移・カテゴリ別出品額構成をバックエンド(DB)から取得する
 export const getAnalytics = async (): Promise<AnalyticsData> => {
   const response = await fetch(`${BACKEND_URL}/analytics`, { headers: await authHeaders() });
