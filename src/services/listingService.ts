@@ -1,5 +1,5 @@
 import type { CompetitorSuggestions, ConditionAssessment, MarketTrend, ProductAspect, ProductData } from '../types/listing';
-import type { AnalyticsData, ListingDetail, RecentListing, SalesSummary } from '../types/app';
+import type { AnalyticsData, EbayEnvironment, EbayStatus, ListingDetail, RecentListing, SalesSummary } from '../types/app';
 import { mockProductData } from '../mock/mockData';
 import { supabase } from './supabaseClient';
 
@@ -179,8 +179,8 @@ export const getListingDetail = async (id: string): Promise<ListingDetail> => {
 };
 
 // 7. eBayユーザー同意画面のURLを取得する（設定タブの「eBayでログイン」ボタンから使用）
-export const getEbayAuthUrl = async (): Promise<string> => {
-  const response = await fetch(`${BACKEND_URL}/ebay/auth-url`, { headers: await authHeaders() });
+export const getEbayAuthUrl = async (environment: EbayEnvironment): Promise<string> => {
+  const response = await fetch(`${BACKEND_URL}/ebay/auth-url?env=${environment}`, { headers: await authHeaders() });
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
     throw new Error(data.error || 'eBay認証URLの取得に失敗しました');
@@ -189,11 +189,28 @@ export const getEbayAuthUrl = async (): Promise<string> => {
   return data.url;
 };
 
-// 8. eBayアカウントが接続済みかどうかを確認する
-export const getEbayStatus = async (): Promise<{ connected: boolean }> => {
+// 8. eBayアカウントの接続状態（Sandbox/Production両方＋現在の有効環境）を確認する
+export const getEbayStatus = async (): Promise<EbayStatus> => {
   const response = await fetch(`${BACKEND_URL}/ebay/status`, { headers: await authHeaders() });
   if (!response.ok) {
-    return { connected: false };
+    return {
+      activeEnv: 'SANDBOX',
+      sandbox: { connected: false, ebayUsername: null },
+      production: { connected: false, ebayUsername: null },
+    };
   }
   return await response.json();
+};
+
+// 9. 既に接続済みのSandbox/Productionを設定タブから即時切り替える
+export const setActiveEbayEnv = async (environment: EbayEnvironment): Promise<void> => {
+  const response = await fetch(`${BACKEND_URL}/ebay/active-env`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+    body: JSON.stringify({ environment }),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || 'eBay環境の切替に失敗しました');
+  }
 };

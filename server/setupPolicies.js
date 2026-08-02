@@ -1,6 +1,6 @@
 import dotenv from 'dotenv';
 import axios from 'axios';
-import { EBAY_BASE_URL, getUserAccessToken } from './ebayAuth.js';
+import { getEbayEnvConfig, getUserAccessToken } from './ebayAuth.js';
 import { updateEnvValue } from './envFile.js';
 
 dotenv.config();
@@ -10,10 +10,11 @@ const MARKETPLACE_ID = 'EBAY_US';
 // Business Policy機能(Selling Policy Management)へのオプトイン。
 // 新規作成したSandboxテストユーザーはデフォルトで無効になっており、
 // 有効化しないままポリシー作成APIを呼ぶと「User is not eligible for Business Policy」エラーになる。
-export async function ensureBusinessPolicyOptIn(token) {
+export async function ensureBusinessPolicyOptIn(token, environment) {
+  const { baseUrl } = getEbayEnvConfig(environment);
   try {
     await axios.post(
-      `${EBAY_BASE_URL}/sell/account/v1/program/opt_in`,
+      `${baseUrl}/sell/account/v1/program/opt_in`,
       { programType: 'SELLING_POLICY_MANAGEMENT' },
       { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
     );
@@ -32,8 +33,9 @@ export async function ensureBusinessPolicyOptIn(token) {
 }
 
 // 配送ポリシーを取得、無ければ最低限の内容で新規作成する
-export async function ensureFulfillmentPolicy(token) {
-  const listRes = await axios.get(`${EBAY_BASE_URL}/sell/account/v1/fulfillment_policy`, {
+export async function ensureFulfillmentPolicy(token, environment) {
+  const { baseUrl } = getEbayEnvConfig(environment);
+  const listRes = await axios.get(`${baseUrl}/sell/account/v1/fulfillment_policy`, {
     headers: { Authorization: `Bearer ${token}` },
     params: { marketplace_id: MARKETPLACE_ID },
   });
@@ -45,7 +47,7 @@ export async function ensureFulfillmentPolicy(token) {
   }
 
   const createRes = await axios.post(
-    `${EBAY_BASE_URL}/sell/account/v1/fulfillment_policy`,
+    `${baseUrl}/sell/account/v1/fulfillment_policy`,
     {
       name: 'eBay AI Lister Default Shipping',
       marketplaceId: MARKETPLACE_ID,
@@ -74,8 +76,9 @@ export async function ensureFulfillmentPolicy(token) {
 }
 
 // 返品ポリシーを取得、無ければ最低限の内容で新規作成する
-export async function ensureReturnPolicy(token) {
-  const listRes = await axios.get(`${EBAY_BASE_URL}/sell/account/v1/return_policy`, {
+export async function ensureReturnPolicy(token, environment) {
+  const { baseUrl } = getEbayEnvConfig(environment);
+  const listRes = await axios.get(`${baseUrl}/sell/account/v1/return_policy`, {
     headers: { Authorization: `Bearer ${token}` },
     params: { marketplace_id: MARKETPLACE_ID },
   });
@@ -87,7 +90,7 @@ export async function ensureReturnPolicy(token) {
   }
 
   const createRes = await axios.post(
-    `${EBAY_BASE_URL}/sell/account/v1/return_policy`,
+    `${baseUrl}/sell/account/v1/return_policy`,
     {
       name: 'eBay AI Lister Default Returns',
       marketplaceId: MARKETPLACE_ID,
@@ -106,11 +109,13 @@ export async function ensureReturnPolicy(token) {
 // 出荷元ロケーションを取得、無ければ.envの住所情報から新規作成する。
 // 住所自体はアプリ全体で共有の出荷元（EBAY_LOCATION_*）を使う前提の簡易実装
 // （ユーザーごとに異なる出荷元住所を持たせるにはUIでの住所入力機能の追加が別途必要）。
-export async function ensureMerchantLocation(token) {
+// SandboxとProductionは完全に別のeBayアカウント空間のため、同じロケーションキー名でも衝突しない。
+export async function ensureMerchantLocation(token, environment) {
+  const { baseUrl } = getEbayEnvConfig(environment);
   const merchantLocationKey = process.env.EBAY_MERCHANT_LOCATION_KEY || 'DEFAULT_LOCATION';
 
   const exists = await axios
-    .get(`${EBAY_BASE_URL}/sell/inventory/v1/location/${merchantLocationKey}`, {
+    .get(`${baseUrl}/sell/inventory/v1/location/${merchantLocationKey}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
     .then(() => true)
@@ -143,7 +148,7 @@ export async function ensureMerchantLocation(token) {
   }
 
   await axios.post(
-    `${EBAY_BASE_URL}/sell/inventory/v1/location/${merchantLocationKey}`,
+    `${baseUrl}/sell/inventory/v1/location/${merchantLocationKey}`,
     {
       name: 'eBay AI Lister Default Location',
       merchantLocationStatus: 'ENABLED',
@@ -165,23 +170,25 @@ export async function ensureMerchantLocation(token) {
   return merchantLocationKey;
 }
 
-// 指定したアクセストークンのeBayアカウントに対し、Business Policies・出荷元ロケーションを
+// 指定したアクセストークン・環境のeBayアカウントに対し、Business Policies・出荷元ロケーションを
 // 一括セットアップする（get-or-createなので何度呼んでも安全）。
 // アプリ内「eBayでログイン」の直後に自動実行される他、npm run setup:policiesからも呼ばれる。
-export async function setupEbayPoliciesForToken(token) {
-  await ensureBusinessPolicyOptIn(token);
-  const fulfillmentPolicyId = await ensureFulfillmentPolicy(token);
-  const returnPolicyId = await ensureReturnPolicy(token);
-  const merchantLocationKey = await ensureMerchantLocation(token);
+export async function setupEbayPoliciesForToken(token, environment) {
+  await ensureBusinessPolicyOptIn(token, environment);
+  const fulfillmentPolicyId = await ensureFulfillmentPolicy(token, environment);
+  const returnPolicyId = await ensureReturnPolicy(token, environment);
+  const merchantLocationKey = await ensureMerchantLocation(token, environment);
   return { fulfillmentPolicyId, returnPolicyId, merchantLocationKey };
 }
 
 // npm run setup:policies から直接実行された場合のみ動作する
-// （.envのEBAY_USER_REFRESH_TOKENを使ったローカル動作確認・旧来の手動セットアップ用）
+// （.envのEBAY_USER_REFRESH_TOKENを使ったローカル動作確認・旧来の手動セットアップ用。
+//   環境は.envのEBAY_ENV、未指定ならSANDBOX扱い）
 async function main() {
-  console.log('eBay Business Policies / 出荷元ロケーションのセットアップを開始します...');
-  const token = await getUserAccessToken();
-  const { fulfillmentPolicyId, returnPolicyId } = await setupEbayPoliciesForToken(token);
+  const environment = process.env.EBAY_ENV === 'PRODUCTION' ? 'PRODUCTION' : 'SANDBOX';
+  console.log(`eBay Business Policies / 出荷元ロケーションのセットアップを開始します...（環境: ${environment}）`);
+  const token = await getUserAccessToken(undefined, environment);
+  const { fulfillmentPolicyId, returnPolicyId } = await setupEbayPoliciesForToken(token, environment);
 
   updateEnvValue('EBAY_FULFILLMENT_POLICY_ID', fulfillmentPolicyId);
   updateEnvValue('EBAY_RETURN_POLICY_ID', returnPolicyId);

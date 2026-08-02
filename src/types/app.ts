@@ -1,5 +1,15 @@
 export type TabType = 'home' | 'analytics' | 'settings';
 
+export type EbayEnvironment = 'SANDBOX' | 'PRODUCTION';
+
+// eBay接続状態（設定タブ用）。Sandbox/Productionを同時に接続可能で、
+// activeEnvが実際の出品(/api/publish-ebay)・価格調査に使われる環境
+export interface EbayStatus {
+  activeEnv: EbayEnvironment;
+  sandbox: { connected: boolean; ebayUsername: string | null };
+  production: { connected: boolean; ebayUsername: string | null };
+}
+
 export interface RecentListing {
   id: string;
   title: string;

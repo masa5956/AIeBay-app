@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex" />
+<title>プライバシーポリシー | eBay AI Lister</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif;
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 40px 20px 80px;
+    line-height: 1.8;
+    color: #1e293b;
+    background: #f8fafc;
+  }
+  h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
+  .updated { color: #64748b; font-size: 0.85rem; margin-bottom: 2rem; }
+  h2 { font-size: 1.05rem; margin-top: 2rem; border-left: 4px solid #2563eb; padding-left: 0.6rem; }
+  ul { padding-left: 1.4rem; }
+  li { margin-bottom: 0.4rem; }
+  .contact { background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 1rem 1.2rem; margin-top: 0.5rem; }
+</style>
+</head>
+<body>
+  <h1>プライバシーポリシー</h1>
+  <p class="updated">最終更新日: 2026年8月2日</p>
+
+  <p>
+    本ポリシーは、eBay AI Lister（以下「本サービス」）における利用者情報の取り扱いについて説明するものです。
+    本サービスは個人により開発・運営されています。
+  </p>
+
+  <h2>収集する情報</h2>
+  <ul>
+    <li>アカウント情報: メールアドレス、パスワード（Supabase Authを通じて安全に管理され、運営者は平文パスワードを閲覧できません）</li>
+    <li>eBay連携情報: 利用者が「eBayでログイン」機能で許可した場合に限り、eBayアカウントのOAuthアクセストークン（refresh_token）およびeBayユーザー名</li>
+    <li>出品情報: 利用者がアップロードした商品写真、AIが生成した商品タイトル・説明文・商品仕様、価格、出品履歴</li>
+  </ul>
+
+  <h2>情報の利用目的</h2>
+  <ul>
+    <li>本サービスへのログイン認証のため</li>
+    <li>利用者の許可のもと、利用者自身のeBayアカウントに商品を出品するため</li>
+    <li>出品履歴・売上サマリー・分析グラフを利用者に表示するため</li>
+    <li>アップロードされた商品写真をAIで解析し、出品用のタイトル・説明文・商品仕様を自動生成するため</li>
+  </ul>
+
+  <h2>外部サービスへの提供</h2>
+  <p>本サービスの機能を提供するため、以下の外部サービスに必要な範囲でデータを送信します。</p>
+  <ul>
+    <li><strong>Supabase</strong>: アカウント認証、データベース、商品画像のホスティング</li>
+    <li><strong>Google Gemini / Groq</strong>: アップロードされた商品写真のAI画像解析（出品情報の自動生成のため）</li>
+    <li><strong>eBay</strong>: 利用者の許可のもとでの出品処理、および出品に必要な情報（Business Policies等）の取得</li>
+  </ul>
+  <p>これら以外の第三者への情報提供・販売は行いません。</p>
+
+  <h2>データの保存期間・削除</h2>
+  <ul>
+    <li>アカウント情報・出品履歴は、利用者がアカウントを削除するまで保存されます。削除をご希望の場合は下記お問い合わせ先までご連絡ください。</li>
+    <li>eBayアカウントとの連携（refresh_token）は、利用者が設定画面から再接続・切断するまで、または利用者がeBay側でアカウントを削除・閉鎖した場合（eBayからの削除通知を受けて自動的に）保存されます。</li>
+  </ul>
+
+  <h2>お問い合わせ</h2>
+  <div class="contact">
+    <p>本ポリシーおよび利用者情報の取り扱いに関するお問い合わせは、以下までご連絡ください。</p>
+    <p>メール: renjianshige793@gmail.com</p>
+  </div>
+</body>
+</html>

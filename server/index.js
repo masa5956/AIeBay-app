@@ -5,15 +5,21 @@ import multer from 'multer';
 import axios from 'axios';
 import crypto from 'node:crypto';
 import {
-  EBAY_BASE_URL,
-  EBAY_AUTH_URL,
+  EBAY_ENVIRONMENTS,
   AUTH_SCOPES,
+  getEbayEnvConfig,
   getAppAccessToken,
   getUserAccessToken,
   exchangeAuthCodeForTokens,
   getEbayUsername,
 } from './ebayAuth.js';
-import { getEbayConnection, setEbayConnection, deleteEbayConnectionsByUsername } from './ebayConnectionsRepository.js';
+import {
+  getEbayConnection,
+  getAllEbayConnections,
+  setEbayConnection,
+  deleteEbayConnectionsByUsername,
+} from './ebayConnectionsRepository.js';
+import { getActiveEbayEnv, setActiveEbayEnv } from './userSettingsRepository.js';
 import { setupEbayPoliciesForToken } from './setupPolicies.js';
 import { requireAuth } from './authMiddleware.js';
 import { AI_PROVIDER, generateImageJson } from './aiProvider.js';
@@ -128,11 +134,13 @@ app.post('/api/estimate-price', requireAuth, async (req, res) => {
       return res.status(400).json({ error: '検索キーワードが必要です。' });
     }
 
-    const appToken = await getAppAccessToken();
+    const environment = await getActiveEbayEnv(req.userId);
+    const { baseUrl } = getEbayEnvConfig(environment);
+    const appToken = await getAppAccessToken(environment);
 
     // Browse API による同一・類似商品の価格検索
     const searchResponse = await axios.get(
-      `${EBAY_BASE_URL}/buy/browse/v1/item_summary/search`,
+      `${baseUrl}/buy/browse/v1/item_summary/search`,
       {
         headers: {
           Authorization: `Bearer ${appToken}`,
@@ -205,10 +213,11 @@ app.post('/api/estimate-price', requireAuth, async (req, res) => {
 // =================================================================
 app.post('/api/publish-ebay', requireAuth, async (req, res) => {
   try {
-    const connection = await getEbayConnection(req.userId);
+    const environment = await getActiveEbayEnv(req.userId);
+    const connection = await getEbayConnection(req.userId, environment);
     if (!connection?.refresh_token) {
       return res.status(400).json({
-        error: 'eBayアカウントが未接続です。設定タブから「eBayでログイン」を行ってください。',
+        error: `eBayアカウント（${environment}）が未接続です。設定タブから「eBayでログイン」を行ってください。`,
       });
     }
     if (!connection.fulfillment_policy_id || !connection.return_policy_id) {
@@ -217,10 +226,11 @@ app.post('/api/publish-ebay', requireAuth, async (req, res) => {
       });
     }
 
+    const { baseUrl } = getEbayEnvConfig(environment);
     const productData = req.body;
     const sku = `SKU-${Date.now()}`;
 
-    const userAccessToken = await getUserAccessToken(req.userId);
+    const userAccessToken = await getUserAccessToken(req.userId, environment);
     const merchantLocationKey = connection.merchant_location_key || 'DEFAULT_LOCATION';
     const categoryId = productData.categoryId || '112529'; // カテゴリー未指定時のフォールバック（テスト用ID）
 
@@ -268,7 +278,7 @@ app.post('/api/publish-ebay', requireAuth, async (req, res) => {
 
     // Step 1: Inventory Item の作成 (PUT /sell/inventory/v1/inventory_item/{sku})
     await axios.put(
-      `${EBAY_BASE_URL}/sell/inventory/v1/inventory_item/${sku}`,
+      `${baseUrl}/sell/inventory/v1/inventory_item/${sku}`,
       {
         product: {
           title: productData.title,
@@ -292,7 +302,7 @@ app.post('/api/publish-ebay', requireAuth, async (req, res) => {
 
     // Step 2: Offer の作成 (POST /sell/inventory/v1/offer)
     const offerResponse = await axios.post(
-      `${EBAY_BASE_URL}/sell/inventory/v1/offer`,
+      `${baseUrl}/sell/inventory/v1/offer`,
       {
         sku,
         marketplaceId: 'EBAY_US',
@@ -327,7 +337,7 @@ app.post('/api/publish-ebay', requireAuth, async (req, res) => {
 
     // Step 3: Offer のパブリッシュ (POST /sell/inventory/v1/offer/{offerId}/publish)
     const publishResponse = await axios.post(
-      `${EBAY_BASE_URL}/sell/inventory/v1/offer/${offerId}/publish`,
+      `${baseUrl}/sell/inventory/v1/offer/${offerId}/publish`,
       {},
       {
         headers: {
@@ -438,47 +448,53 @@ app.get('/api/analytics', requireAuth, async (req, res) => {
 // =================================================================
 
 // ① このURLをブラウザで開き、eBayアカウントでログイン・アプリ許可を行う。
-//    どのアプリユーザーが同意したかを後で判別できるよう、userIdをstateパラメータに埋め込む
+//    ?env=SANDBOX|PRODUCTION でどちらの環境に接続するかを指定（省略時SANDBOX）。
+//    どのアプリユーザー・環境の同意かを後で判別できるよう、"userId:environment"をstateに埋め込む
 //    （eBayが同意後にそのままcallbackへ引き回してくれる標準的なOAuthの仕組み）。
 app.get('/api/ebay/auth-url', requireAuth, (req, res) => {
-  if (!process.env.EBAY_CLIENT_ID || !process.env.EBAY_RU_NAME) {
-    return res.status(400).json({ error: 'EBAY_CLIENT_ID / EBAY_RU_NAME を.envに設定してください。' });
+  const environment = EBAY_ENVIRONMENTS.includes(req.query.env) ? req.query.env : 'SANDBOX';
+  const { authUrl, clientId, ruName } = getEbayEnvConfig(environment);
+  if (!clientId || !ruName) {
+    return res.status(400).json({
+      error: `EBAY_${environment}_CLIENT_ID / EBAY_${environment}_RU_NAME を.envに設定してください。`,
+    });
   }
 
-  const url = `${EBAY_AUTH_URL}?${new URLSearchParams({
-    client_id: process.env.EBAY_CLIENT_ID,
-    redirect_uri: process.env.EBAY_RU_NAME,
+  const url = `${authUrl}?${new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: ruName,
     response_type: 'code',
     scope: AUTH_SCOPES,
-    state: req.userId,
+    state: `${req.userId}:${environment}`,
   }).toString()}`;
 
   return res.json({ url });
 });
 
-// ② eBayがEBAY_RU_NAMEに設定した「Your auth accepted URL」経由でここにリダイレクトしてくる。
-//    このURLがEBAY_RU_NAMEの「Your auth accepted URL」として登録されている必要がある。
+// ② eBayがEBAY_*_RU_NAMEに設定した「Your auth accepted URL」経由でここにリダイレクトしてくる。
+//    このURLがRuNameの「Your auth accepted URL」として登録されている必要がある。
 //    ブラウザの素のリダイレクトでAuthorizationヘッダーは付かないため、認証はstateパラメータ
-//    （①で埋め込んだuserId）で行う。
+//    （①で埋め込んだ"userId:environment"）で行う。
 app.get('/api/ebay/callback', async (req, res) => {
-  const { code, error, state: userId } = req.query;
+  const { code, error, state } = req.query;
+  const [userId, environment] = typeof state === 'string' ? state.split(':') : [];
 
   if (error || !code) {
     return res.status(400).send(`<h1>eBay認可に失敗しました</h1><p>${error || 'codeがありません'}</p>`);
   }
-  if (!userId) {
+  if (!userId || !EBAY_ENVIRONMENTS.includes(environment)) {
     return res.status(400).send('<h1>ユーザー情報が見つかりません</h1><p>アプリの設定タブから改めてログインし直してください。</p>');
   }
 
   try {
-    const tokens = await exchangeAuthCodeForTokens(code);
+    const tokens = await exchangeAuthCodeForTokens(code, environment);
 
     // アカウント削除通知（username付きで届く）との突合用に、同意直後のaccess_token
     // （AUTH_SCOPESでcommerce.identity.readonlyまで同意済み）でeBayユーザー名を取得しておく。
     // 取得失敗はログイン自体をブロックしない（ebay_usernameがnullのままになるだけ）。
     let ebayUsername = null;
     try {
-      ebayUsername = await getEbayUsername(tokens.access_token);
+      ebayUsername = await getEbayUsername(tokens.access_token, environment);
     } catch (identityErr) {
       console.error('eBayユーザー名の取得に失敗しました:', identityErr?.response?.data || identityErr);
     }
@@ -486,7 +502,9 @@ app.get('/api/ebay/callback', async (req, res) => {
     // Supabaseのebay_connectionsにrefresh_tokenを先に保存する（Renderのような永続ディスクの無い
     // 環境でも再起動・再デプロイをまたいでログイン状態を維持できる、アプリ内ログインの本体）。
     // Business Policy自動セットアップが失敗しても、ログイン自体は必ず成功させる。
-    await setEbayConnection(userId, { refreshToken: tokens.refresh_token, ebayUsername });
+    await setEbayConnection(userId, environment, { refreshToken: tokens.refresh_token, ebayUsername });
+    // 今接続した環境を、そのままこのユーザーのアクティブ環境として即座に切り替える
+    await setActiveEbayEnv(userId, environment);
 
     // Business Policies・出荷元ロケーションをこのeBayアカウントに対して自動セットアップ
     // （get-or-createのため、既存アカウントの再ログインでも安全に何度でも実行できる）。
@@ -494,15 +512,15 @@ app.get('/api/ebay/callback', async (req, res) => {
     // 呼び出しが不安定になることがあるため、保存直後のrefresh_tokenからrefresh token grantで
     // 改めて取得したaccess_token（実際の出品時と同じ経路）を使う。
     try {
-      const accessToken = await getUserAccessToken(userId);
-      const policyInfo = await setupEbayPoliciesForToken(accessToken);
-      await setEbayConnection(userId, { refreshToken: tokens.refresh_token, ...policyInfo });
+      const accessToken = await getUserAccessToken(userId, environment);
+      const policyInfo = await setupEbayPoliciesForToken(accessToken, environment);
+      await setEbayConnection(userId, environment, { refreshToken: tokens.refresh_token, ...policyInfo });
     } catch (policyErr) {
       console.error('Business Policy自動セットアップに失敗しました:', policyErr?.response?.data || policyErr);
     }
 
     return res.send(
-      `<h1>eBayとの連携が完了しました</h1>
+      `<h1>eBayとの連携が完了しました（${environment}）</h1>
        <p>このタブを閉じてアプリに戻ってください。再起動不要ですぐに出品できます。</p>`
     );
   } catch (err) {
@@ -511,14 +529,44 @@ app.get('/api/ebay/callback', async (req, res) => {
   }
 });
 
-// ③ 現在のeBay接続状態を確認する（設定タブでの表示用）
+// ③ 現在のeBay接続状態を確認する（設定タブでの表示用、Sandbox/Production両方＋現在の有効環境を返す）
 app.get('/api/ebay/status', requireAuth, async (req, res) => {
   try {
-    const connection = await getEbayConnection(req.userId);
-    return res.json({ connected: !!connection?.refresh_token });
+    const [connections, activeEnv] = await Promise.all([
+      getAllEbayConnections(req.userId),
+      getActiveEbayEnv(req.userId),
+    ]);
+    const byEnv = Object.fromEntries(connections.map((c) => [c.environment, c]));
+
+    return res.json({
+      activeEnv,
+      sandbox: { connected: !!byEnv.SANDBOX?.refresh_token, ebayUsername: byEnv.SANDBOX?.ebay_username || null },
+      production: { connected: !!byEnv.PRODUCTION?.refresh_token, ebayUsername: byEnv.PRODUCTION?.ebay_username || null },
+    });
   } catch (error) {
     console.error('eBay接続状態の確認に失敗しました:', error);
     return res.status(500).json({ error: 'eBay接続状態の確認に失敗しました。' });
+  }
+});
+
+// ④ 設定タブから、既に接続済みの環境へ即座に切り替える（サーバー再起動・再デプロイ不要）
+app.post('/api/ebay/active-env', requireAuth, async (req, res) => {
+  try {
+    const { environment } = req.body;
+    if (!EBAY_ENVIRONMENTS.includes(environment)) {
+      return res.status(400).json({ error: 'environmentはSANDBOXまたはPRODUCTIONを指定してください。' });
+    }
+    const connection = await getEbayConnection(req.userId, environment);
+    if (!connection?.refresh_token) {
+      return res.status(400).json({
+        error: `${environment}のeBayアカウントが未接続です。先に「eBayでログイン」で接続してください。`,
+      });
+    }
+    await setActiveEbayEnv(req.userId, environment);
+    return res.json({ activeEnv: environment });
+  } catch (error) {
+    console.error('eBay環境切替に失敗しました:', error);
+    return res.status(500).json({ error: 'eBay環境切替に失敗しました。' });
   }
 });
 

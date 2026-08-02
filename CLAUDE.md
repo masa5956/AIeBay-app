@@ -37,7 +37,7 @@ Vite + React18 + TS + Tailwind + `lucide-react` + `recharts`。[App.tsx](src/App
 | [AuthScreen.tsx](src/components/AuthScreen.tsx) | ログイン/サインアップ（Supabase Auth）。未ログイン時は`App.tsx`がこれのみ表示 |
 | [HomeDashboard.tsx](src/components/HomeDashboard.tsx) | ホーム。`getListings()`で売上サマリー・最近の出品を表示（マウント時・出品後に再取得） |
 | [AnalyticsPanel.tsx](src/components/AnalyticsPanel.tsx) | `getAnalytics()`で月別出品額推移・カテゴリ別構成グラフ表示 |
-| [SettingsPanel.tsx](src/components/SettingsPanel.tsx) | `getEbayStatus()`/`getEbayAuthUrl()`でeBay接続状態表示・「eBayでログイン」ボタン、モック解析トグル、ログアウト |
+| [SettingsPanel.tsx](src/components/SettingsPanel.tsx) | `getEbayStatus()`でSandbox/Production両方の接続状態と現在の有効環境を表示。切替タブでどちらかを選択し、未接続なら「eBayでログイン」(`getEbayAuthUrl(env)`)、接続済みで非アクティブなら「切り替える」(`setActiveEbayEnv(env)`)ボタンを出し分け。モック解析トグル、ログアウトも |
 | Step1_ImageUpload〜Step4_Preview | 出品ウィザード（撮影→AI解析結果補正→価格調整→最終確認）。[StepperHeader.tsx](src/components/StepperHeader.tsx)でステップ間移動（解析結果が無いうちはStep2以降不可） |
 | [ListingDetailModal.tsx](src/components/ListingDetailModal.tsx) | 最近の出品タップで開く詳細（`getListingDetail(id)`で写真・説明文・aspects取得） |
 | [Toast.tsx](src/components/Toast.tsx) / [CancelConfirmDialog.tsx](src/components/CancelConfirmDialog.tsx) | 完了・失敗通知 / 出品キャンセル確認 |
@@ -48,10 +48,11 @@ Vite + React18 + TS + Tailwind + `lucide-react` + `recharts`。[App.tsx](src/App
   ログイン状態監視。listings等のデータはこのクライアントから直接読み書きせず必ずバックエンド経由
   （`listingService.ts`が各リクエストに`Authorization: Bearer <access_token>`を自動付与）。
 - **型定義**: [src/types/listing.ts](src/types/listing.ts)（`ProductData`, `Condition`, AI分析結果）、
-  [src/types/app.ts](src/types/app.ts)（`TabType`, `RecentListing`, `ListingDetail`, `SalesSummary`, `AnalyticsData`）。
+  [src/types/app.ts](src/types/app.ts)（`TabType`, `RecentListing`, `ListingDetail`, `SalesSummary`, `AnalyticsData`,
+  `EbayEnvironment`, `EbayStatus`）。
 - **APIクライアント**: [src/services/listingService.ts](src/services/listingService.ts)。`analyzeImageWithAI` /
-  `estimatePrice` / `publishToEbay` / `getListings` / `getAnalytics` / `getListingDetail` / `getEbayAuthUrl` /
-  `getEbayStatus`がバックエンド（既定`http://localhost:3001/api`、`VITE_BACKEND_URL`で変更可）を呼ぶ。
+  `estimatePrice` / `publishToEbay` / `getListings` / `getAnalytics` / `getListingDetail` / `getEbayAuthUrl(env)` /
+  `getEbayStatus` / `setActiveEbayEnv(env)`がバックエンド（既定`http://localhost:3001/api`、`VITE_BACKEND_URL`で変更可）を呼ぶ。
   `mockAnalyzeImage`/`mockPublishItem`（[src/mock/mockData.ts](src/mock/mockData.ts)）は設定タブのモックトグル用。
 
 ### バックエンド
@@ -68,9 +69,10 @@ Vite + React18 + TS + Tailwind + `lucide-react` + `recharts`。[App.tsx](src/App
 | `GET /api/listings` | 自分の最近の出品一覧・売上サマリー（ホーム用） |
 | `GET /api/listings/:id` | 1件分の全項目（説明文・aspects含む、詳細モーダル用） |
 | `GET /api/analytics` | 月別出品額推移（直近6ヶ月）・カテゴリ別構成 |
-| `GET /api/ebay/auth-url` | eBay同意URL発行。`userId`を`state`に埋め込みcallbackでの判別に使う |
-| `GET /api/ebay/callback` | eBayからのリダイレクト先（認証対象外）。`state`のuserIdでユーザー特定、`exchangeAuthCodeForTokens`→`getEbayUsername`→`setEbayConnection`→`setupEbayPoliciesForToken()`の順で保存・自動セットアップ |
-| `GET /api/ebay/status` | eBay接続済みかどうか |
+| `GET /api/ebay/auth-url` | `?env=SANDBOX\|PRODUCTION`（省略時SANDBOX）でeBay同意URLを発行。`"userId:environment"`を`state`に埋め込みcallbackでの判別に使う |
+| `GET /api/ebay/callback` | eBayからのリダイレクト先（認証対象外）。`state`を`:`分割してuserId/environmentを特定、`exchangeAuthCodeForTokens`→`getEbayUsername`→`setEbayConnection`→`setActiveEbayEnv`（接続した環境に即切替）→`setupEbayPoliciesForToken()`の順で保存・自動セットアップ |
+| `GET /api/ebay/status` | Sandbox/Production両方の接続状態(`ebayUsername`含む)と現在の有効環境(`activeEnv`)を返す |
+| `POST /api/ebay/active-env` | 接続済みの環境へ即時切替（`{ environment }`、未接続なら400）。サーバー再起動・再デプロイ不要 |
 | `GET,POST /api/ebay/deletion-notification` | eBay Marketplace Account Deletion通知（認証対象外）。GETはchallenge_code検証、POSTは該当`ebay_username`の`ebay_connections`行を削除し連携解除 |
 
 #### バックエンドモジュール
@@ -81,9 +83,10 @@ Vite + React18 + TS + Tailwind + `lucide-react` + `recharts`。[App.tsx](src/App
 | [aiProvider.js](server/aiProvider.js) | `.env`の`AI_PROVIDER`(`gemini`/`groq`)で[geminiClient.js](server/geminiClient.js)/[groqClient.js](server/groqClient.js)切替。`generateJson()`/`generateImageJson()`を公開、AI呼び出しは必ずこれ経由 |
 | [analysisAgents.js](server/analysisAgents.js) | `runConditionAgent`（状態・欠陥検出）、`runMarketTrendAgent`/`runCompetitorAgent`（市場トレンド・競合比較）、`scoreListing`（LLM不使用の決定的スコア計算） |
 | [priceStats.js](server/priceStats.js) | IQR外れ値除去`removeOutliersByIQR()` |
-| [ebayAuth.js](server/ebayAuth.js) | eBay OAuth共通処理。`getUserAccessToken(userId)`は`ebay_connections`のrefresh_tokenで取得（省略時`.env`の`EBAY_USER_REFRESH_TOKEN`、`setup:policies`ローカル専用）。`USER_SCOPES`(出品/Policy用、refresh grantで常用)と`AUTH_SCOPES`(初回同意専用、`commerce.identity.readonly`追加)を分離— 混ぜると既存接続の更新が未同意スコープエラーで壊れるため。`getEbayUsername()`は削除通知突合用 |
-| [ebayConnectionsRepository.js](server/ebayConnectionsRepository.js) | `ebay_connections`のCRUD（`getEbayConnection`/`getEbayRefreshToken`/`setEbayConnection`/`deleteEbayConnectionsByUsername`） |
-| [setupPolicies.js](server/setupPolicies.js) | `ensureBusinessPolicyOptIn`/`ensureFulfillmentPolicy`/`ensureReturnPolicy`/`ensureMerchantLocation`（get-or-create）をまとめた`setupEbayPoliciesForToken(token)`。callback自動実行の他`npm run setup:policies`でも単独動作（`isDirectRun`ガード） |
+| [ebayAuth.js](server/ebayAuth.js) | eBay OAuth共通処理。`getEbayEnvConfig(environment)`が`'SANDBOX'`/`'PRODUCTION'`ごとのbaseUrl/authUrl/クライアントID等（`EBAY_SANDBOX_*`/`EBAY_PRODUCTION_*`）を解決し、`getAppAccessToken`/`getUserAccessToken`/`exchangeAuthCodeForTokens`/`getEbayUsername`は全て`environment`引数必須。`getUserAccessToken(userId, environment)`は`ebay_connections`のrefresh_tokenで取得（`userId`省略時`.env`の`EBAY_USER_REFRESH_TOKEN`、`setup:policies`ローカル専用、`environment`省略時`.env`の`EBAY_ENV`）。`USER_SCOPES`(出品/Policy用、refresh grantで常用)と`AUTH_SCOPES`(初回同意専用、`commerce.identity.readonly`追加)を分離—混ぜると既存接続の更新が未同意スコープエラーで壊れるため |
+| [ebayConnectionsRepository.js](server/ebayConnectionsRepository.js) | `ebay_connections`のCRUD、全関数`environment`引数必須（1ユーザーがSandbox/Production同時接続可）。`getEbayConnection`/`getEbayRefreshToken`/`setEbayConnection`/`getAllEbayConnections`(両環境まとめて取得)/`deleteEbayConnectionsByUsername`(環境問わずusername一致で削除) |
+| [userSettingsRepository.js](server/userSettingsRepository.js) | `user_settings`のCRUD。`getActiveEbayEnv(userId)`/`setActiveEbayEnv(userId, environment)`—ユーザーが今どちらの環境で出品するかを保持（未設定時`'SANDBOX'`） |
+| [setupPolicies.js](server/setupPolicies.js) | `ensureBusinessPolicyOptIn`/`ensureFulfillmentPolicy`/`ensureReturnPolicy`/`ensureMerchantLocation`（get-or-create、全て`environment`引数必須）をまとめた`setupEbayPoliciesForToken(token, environment)`。callback自動実行の他`npm run setup:policies`でも単独動作（`.env`の`EBAY_ENV`使用、`isDirectRun`ガード） |
 | [envFile.js](server/envFile.js) | `.env`書き換え`updateEnvValue()`（`setup:policies`ローカル実行専用） |
 | [supabaseClient.js](server/supabaseClient.js) | `service_role`キー使用。未設定時`supabase`は`null`（関連機能のみスキップ、サーバーは落ちない） |
 | [listingsRepository.js](server/listingsRepository.js) | `listings`のCRUD、全関数`userId`必須・`.eq('user_id', userId)`（`saveListing`/`getRecentListings`/`getListingByListingId`/`getSalesSummary`/`getAnalytics`） |
@@ -108,19 +111,44 @@ create table public.listings (
   created_at timestamptz not null default now()
 );
 
+-- ユーザー×環境(SANDBOX/PRODUCTION)ごとの接続情報。1ユーザーが両方を同時に接続できる
 create table public.ebay_connections (
-  user_id uuid primary key references auth.users(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  environment text not null default 'SANDBOX',
   refresh_token text not null,
   fulfillment_policy_id text,
   return_policy_id text,
   merchant_location_key text,
   ebay_username text, -- アカウント削除通知の突合用
+  updated_at timestamptz not null default now(),
+  primary key (user_id, environment)
+);
+
+-- ユーザーごとに「今どちらの環境で出品するか」を保持（設定タブからの即時切替用）
+create table public.user_settings (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  active_ebay_env text not null default 'SANDBOX',
   updated_at timestamptz not null default now()
 );
 
 -- バックエンドはservice_roleキーで常にRLSをバイパスするが、直接アクセス経路を塞ぐため有効化
 alter table public.listings enable row level security;
 alter table public.ebay_connections enable row level security;
+alter table public.user_settings enable row level security;
+```
+
+既に`ebay_connections`が`user_id`単独主キーで存在する場合のマイグレーション:
+```sql
+alter table public.ebay_connections drop constraint ebay_connections_pkey;
+alter table public.ebay_connections add column environment text not null default 'SANDBOX';
+alter table public.ebay_connections add primary key (user_id, environment);
+
+create table public.user_settings (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  active_ebay_env text not null default 'SANDBOX',
+  updated_at timestamptz not null default now()
+);
+alter table public.user_settings enable row level security;
 ```
 
 Storageに`product-images`という**Public**バケットも作成（撮影画像の公開URL用）。
@@ -130,13 +158,20 @@ Storageに`product-images`という**Public**バケットも作成（撮影画�
 
 ## eBay連携セットアップ
 
-**初回接続**（`.env`のAPIキー設定だけでは出品不可、一度だけ）:
-1. eBay Developer Portalでキーセット（`EBAY_CLIENT_ID`/`EBAY_CLIENT_SECRET`）とRuName（`EBAY_RU_NAME`）を作成し、
-   「Your auth accepted URL」に`https://<バックエンド公開URL>/api/ebay/callback`を設定（httpsのlocalhostが使えない場合ngrok等）。
-2. `.env`の`EBAY_LOCATION_*`に出荷元住所を設定（アプリ全体で共有の単一設定）。
-3. アプリにログイン→設定タブ→「eBayでログイン」→eBay同意画面で許可（**同意したeBayアカウントで以後出品される**）。
-   `/api/ebay/callback`がBusiness Policies・出荷元ロケーションの自動セットアップまで一括実行、再起動不要。
-4. 設定タブのeBay連携状態が「接続中」になれば`/api/publish-ebay`が実行可能。
+Sandbox/Productionは設定タブから即時切替可能（1ユーザーが両方を同時に接続でき、切替にサーバー再起動・
+再デプロイ不要）。Productionのキーセットが無い/無効でもSandboxのみで全機能が動作する。
+
+**初回接続**（`.env`のAPIキー設定だけでは出品不可、環境ごとに一度だけ）:
+1. eBay Developer Portalで対象環境（Sandbox/Production）のキーセット（`EBAY_SANDBOX_CLIENT_ID`等 /
+   `EBAY_PRODUCTION_CLIENT_ID`等）とRuNameを作成し、「Your auth accepted URL」に
+   `https://<バックエンド公開URL>/api/ebay/callback`を設定（httpsのlocalhostが使えない場合ngrok等、
+   Sandbox/Productionで別々のRuName・別々のURLを登録する必要はなく同一URLでよい）。
+2. `.env`の`EBAY_LOCATION_*`に出荷元住所を設定（アプリ全体・両環境で共有の単一設定）。
+3. アプリにログイン→設定タブ→環境タブでSandbox/Productionを選択→「eBayでログイン」→eBay同意画面で許可
+   （**同意したeBayアカウントでその環境が接続され、自動的に出品先として切り替わる**）。`/api/ebay/callback`が
+   Business Policies・出荷元ロケーションの自動セットアップまで一括実行、再起動不要。
+4. 設定タブでその環境の接続状態が「接続中」になれば`/api/publish-ebay`が実行可能。既に両方接続済みなら、
+   設定タブの「切り替える」ボタンでOAuthをやり直さずに即座に出品先を変更できる。
 
 **Marketplace Account Deletion通知**（本番運用の必須コンプライアンス対応、Webhookエンドポイント実装済み）:
 1. `EBAY_DELETION_VERIFICATION_TOKEN`（32〜80文字の英数字乱数、例`openssl rand -hex 32`）と
@@ -165,7 +200,7 @@ Storageに`product-images`という**Public**バケットも作成（撮影画�
 | Supabase(バックエンド) | `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` |
 | Supabase(フロントエンド、ビルド埋込) | `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` |
 | AI | `AI_PROVIDER` / `GEMINI_API_KEY` / `GEMINI_MODEL` / `GROQ_API_KEY` / `GROQ_MODEL` |
-| eBay認証 | `EBAY_CLIENT_ID` / `EBAY_CLIENT_SECRET` / `EBAY_RU_NAME` / `EBAY_ENV` / `EBAY_USER_REFRESH_TOKEN`(`setup:policies`ローカル専用) |
+| eBay認証 | `EBAY_SANDBOX_CLIENT_ID` / `EBAY_SANDBOX_CLIENT_SECRET` / `EBAY_SANDBOX_RU_NAME` / `EBAY_PRODUCTION_CLIENT_ID` / `EBAY_PRODUCTION_CLIENT_SECRET` / `EBAY_PRODUCTION_RU_NAME`（Production未取得ならSandboxのみ空でなく設定すればよい） / `EBAY_ENV` / `EBAY_USER_REFRESH_TOKEN`(いずれも`setup:policies`ローカル専用) |
 | eBay出品設定 | `EBAY_MERCHANT_LOCATION_KEY` / `EBAY_FULFILLMENT_POLICY_ID` / `EBAY_RETURN_POLICY_ID`(いずれも`setup:policies`ローカル専用) / `EBAY_PAYMENT_POLICY_ID` |
 | 出荷元住所 | `EBAY_LOCATION_ADDRESS_LINE1` / `EBAY_LOCATION_CITY` / `EBAY_LOCATION_STATE_OR_PROVINCE` / `EBAY_LOCATION_POSTAL_CODE` / `EBAY_LOCATION_COUNTRY` |
 | eBay削除通知 | `EBAY_DELETION_VERIFICATION_TOKEN` / `EBAY_DELETION_ENDPOINT_URL` |
