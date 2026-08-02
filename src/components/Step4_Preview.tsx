@@ -13,12 +13,17 @@ export default function Step4_Preview({ productData, onBack, onPublish }: Step4P
   return (
     <div className="space-y-4">
       <h2 className="text-sm font-bold text-slate-700">最終確認</h2>
-      {productData.imageUrl && (
-        <img
-          src={productData.imageUrl}
-          alt="Preview"
-          className="w-full h-36 object-cover rounded-lg border border-slate-200"
-        />
+      {productData.imageUrls.length > 0 && (
+        <div className="flex gap-2 overflow-x-auto pb-1">
+          {productData.imageUrls.map((url, i) => (
+            <img
+              key={i}
+              src={url}
+              alt={`商品写真 ${i + 1}`}
+              className="w-24 h-24 flex-shrink-0 object-cover rounded-lg border border-slate-200"
+            />
+          ))}
+        </div>
       )}
       <div className="border border-slate-200 p-3 rounded-lg space-y-2 bg-slate-50 text-xs">
         <p>

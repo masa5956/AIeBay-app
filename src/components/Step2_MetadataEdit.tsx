@@ -1,9 +1,12 @@
+import { Plus } from 'lucide-react';
 import type { ProductData } from '../types/listing';
 
 interface Step2MetadataEditProps {
   productData: ProductData;
   onChange: (data: ProductData) => void;
   onUpdateAspect: (index: number, value: string) => void;
+  onAddPhotos: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  canAddMorePhotos: boolean;
   onBack: () => void;
   onNext: () => void;
 }
@@ -19,6 +22,8 @@ export default function Step2_MetadataEdit({
   productData,
   onChange,
   onUpdateAspect,
+  onAddPhotos,
+  canAddMorePhotos,
   onBack,
   onNext,
 }: Step2MetadataEditProps) {
@@ -27,13 +32,38 @@ export default function Step2_MetadataEdit({
   return (
     <div className="space-y-4">
       <h2 className="text-sm font-bold text-slate-700">AI解析情報の補正</h2>
-      {productData.imageUrl && (
-        <img
-          src={productData.imageUrl}
-          alt="Preview"
-          className="w-full h-36 object-cover rounded-lg border border-slate-200"
+
+      {/* 撮影済み写真一覧 + 追加撮影。写真を追加すると全画像でAIが再解析し、タイトル/説明文/仕様を再構成する */}
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        {productData.imageUrls.map((url, i) => (
+          <img
+            key={i}
+            src={url}
+            alt={`商品写真 ${i + 1}`}
+            className="w-20 h-20 flex-shrink-0 object-cover rounded-lg border border-slate-200"
+          />
+        ))}
+        {canAddMorePhotos && (
+          <label
+            htmlFor="add-photos-input"
+            className="w-20 h-20 flex-shrink-0 flex flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed border-slate-300 text-slate-400 cursor-pointer hover:border-blue-400 hover:text-blue-500 transition"
+          >
+            <Plus size={18} />
+            <span className="text-[9px] font-bold">追加</span>
+          </label>
+        )}
+        <input
+          id="add-photos-input"
+          type="file"
+          accept="image/*"
+          multiple
+          onChange={onAddPhotos}
+          className="hidden"
         />
-      )}
+      </div>
+      <p className="text-[10px] text-slate-400 -mt-2">
+        写真を追加すると、全ての写真の情報をもとにAIがタイトル・説明文・商品仕様を再構成します
+      </p>
 
       {/* AIによる商品状態評価 */}
       {condition && (

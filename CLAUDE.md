@@ -39,7 +39,7 @@ Vite + React18 + TS + Tailwind + `lucide-react` + `recharts`。[App.tsx](src/App
 | [HomeDashboard.tsx](src/components/HomeDashboard.tsx) | ホーム。`getListings()`で売上サマリー・最近の出品を表示（マウント時・出品後に再取得）。`isLoading`中はゼロ値をそのまま出さずスケルトン表示（フラッシュ・オブ・ゼロコンテンツ防止） |
 | [AnalyticsPanel.tsx](src/components/AnalyticsPanel.tsx) | `getAnalytics()`で月別出品額推移・カテゴリ別構成グラフ表示（`React.lazy`で分析タブを開くまで未読み込み） |
 | [SettingsPanel.tsx](src/components/SettingsPanel.tsx) | `getEbayStatus()`でSandbox/Production両方の接続状態と現在の有効環境を表示。切替タブでどちらかを選択し、未接続なら「eBayでログイン」(`getEbayAuthUrl(env)`)、接続済みで非アクティブなら「切り替える」(`setActiveEbayEnv(env)`)ボタンを出し分け。モック解析トグル、ログアウトも |
-| Step1_ImageUpload〜Step4_Preview | 出品ウィザード（撮影→AI解析結果補正→価格調整→最終確認）。[StepperHeader.tsx](src/components/StepperHeader.tsx)でステップ間移動（解析結果が無いうちはStep2以降不可） |
+| Step1_ImageUpload〜Step4_Preview | 出品ウィザード（撮影→AI解析結果補正→価格調整→最終確認）。写真は複数枚（最大8枚、`App.tsx`の`MAX_PHOTOS`）選択可能で、Step2の「追加」ボタンから撮影済みの元ファイル一式(`selectedFiles`)に追加し全画像で再解析する（`App.tsx`の`runAnalysis()`）。[StepperHeader.tsx](src/components/StepperHeader.tsx)でステップ間移動（解析結果が無いうちはStep2以降不可） |
 | [ListingDetailModal.tsx](src/components/ListingDetailModal.tsx) | 最近の出品タップで開く詳細（`getListingDetail(id)`で写真・説明文・aspects取得） |
 | [Toast.tsx](src/components/Toast.tsx) / [CancelConfirmDialog.tsx](src/components/CancelConfirmDialog.tsx) | 完了・失敗通知 / 出品キャンセル確認 |
 | [BottomNav.tsx](src/components/BottomNav.tsx) | ホーム/分析/設定タブ切替 |
@@ -48,10 +48,10 @@ Vite + React18 + TS + Tailwind + `lucide-react` + `recharts`。[App.tsx](src/App
   （`VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY`）。`App.tsx`が`supabase.auth.getSession()`/`onAuthStateChange()`で
   ログイン状態監視。listings等のデータはこのクライアントから直接読み書きせず必ずバックエンド経由
   （`listingService.ts`が各リクエストに`Authorization: Bearer <access_token>`を自動付与）。
-- **型定義**: [src/types/listing.ts](src/types/listing.ts)（`ProductData`, `Condition`, AI分析結果）、
-  [src/types/app.ts](src/types/app.ts)（`TabType`, `RecentListing`, `ListingDetail`, `SalesSummary`, `AnalyticsData`,
-  `EbayEnvironment`, `EbayStatus`）。
-- **APIクライアント**: [src/services/listingService.ts](src/services/listingService.ts)。`analyzeImageWithAI` /
+- **型定義**: [src/types/listing.ts](src/types/listing.ts)（`ProductData`（`imageUrls: string[]`で複数枚対応）,
+  `Condition`, AI分析結果）、[src/types/app.ts](src/types/app.ts)（`TabType`, `RecentListing`, `ListingDetail`,
+  `SalesSummary`, `AnalyticsData`, `EbayEnvironment`, `EbayStatus`）。
+- **APIクライアント**: [src/services/listingService.ts](src/services/listingService.ts)。`analyzeImageWithAI(files: File[])` /
   `estimatePrice` / `publishToEbay` / `getListings` / `getAnalytics` / `getListingDetail` / `getEbayAuthUrl(env)` /
   `getEbayStatus` / `setActiveEbayEnv(env)`がバックエンド（既定`http://localhost:3001/api`、`VITE_BACKEND_URL`で変更可）を呼ぶ。
   `mockAnalyzeImage`/`mockPublishItem`（[src/mock/mockData.ts](src/mock/mockData.ts)）は設定タブのモックトグル用。
@@ -67,9 +67,9 @@ HTMLレスポンスへのユーザー入力の埋め込みは`escapeHtml()`で�
 
 | Method / Path | 概要 |
 |---|---|
-| `POST /api/analyze-image` | `aiProvider.js`経由でGemini/Groqにタイトル・ブランド・型番・状態・説明文・aspectsをJSON抽出させ、商品状態エージェント（`runConditionAgent`）とSupabase画像アップロード（`uploadProductImage`）を`Promise.all`で並列実行 |
-| `POST /api/estimate-price` | eBay Browse APIで類似商品検索→IQR外れ値除去→市場トレンド/競合比較エージェント→決定的スコア（`scoreListing`）算出 |
-| `POST /api/publish-ebay` | `ebay_connections`のBusiness Policy ID・出荷元ロケーションを使いSell Inventory API（Item→Offer→Publish）で出品。必須Item Specifics（Brand/Color/Connectivity/Model/Type、`categoryId=112529`固定）を既定値で補完。成功後`saveListing()`で履歴保存 |
+| `POST /api/analyze-image` | 画像1〜8枚（`multipart/form-data`の`images`フィールド、複数可）を受け取り、`aiProvider.js`経由でGemini/Groqに全画像まとめてタイトル・ブランド・型番・状態・説明文・aspectsを1つのJSONとして抽出させる。商品状態エージェント（`runConditionAgent`、同じく複数画像対応）とSupabase画像アップロード（`uploadProductImage`を全枚数分）を`Promise.all`で並列実行し、`imageUrls`配列を返す |
+| `POST /api/estimate-price` | eBay Browse APIで類似商品検索→IQR外れ値除去→市場トレンド/競合比較エージェント→決定的スコア（`scoreListing`）算出。類似商品が0件でも価格を0にするだけで市場トレンド・競合比較・スコア計算自体は必ず実行する（検索キーワードは`analyzeImageWithAI`側でtitleを優先しており、以前はbrand+modelが"Unbranded Does not apply"等になり0件ヒットで分析全体が空になる不具合があった） |
+| `POST /api/publish-ebay` | `ebay_connections`のBusiness Policy ID・出荷元ロケーションを使いSell Inventory API（Item→Offer→Publish）で出品。`productData.imageUrls`（複数可）をそのままeBayの`product.imageUrls`に渡す（http(s)以外のURLは除外、1件も無ければプレースホルダー1枚にフォールバック）。必須Item Specifics（Brand/Color/Connectivity/Model/Type、`categoryId=112529`固定）を既定値で補完。成功後`saveListing()`で履歴保存（自アプリの履歴には代表画像1枚(`imageUrls[0]`)のみ保存） |
 | `GET /api/listings` | 自分の最近の出品一覧・売上サマリー（ホーム用） |
 | `GET /api/listings/:id` | 1件分の全項目（説明文・aspects含む、詳細モーダル用） |
 | `GET /api/analytics` | 月別出品額推移（直近6ヶ月）・カテゴリ別構成 |
@@ -84,8 +84,8 @@ HTMLレスポンスへのユーザー入力の埋め込みは`escapeHtml()`で�
 | ファイル | 役割 |
 |---|---|
 | [authMiddleware.js](server/authMiddleware.js) | `requireAuth`。Supabaseアクセストークン検証→`req.userId` |
-| [aiProvider.js](server/aiProvider.js) | `.env`の`AI_PROVIDER`(`gemini`/`groq`)で[geminiClient.js](server/geminiClient.js)/[groqClient.js](server/groqClient.js)切替。`generateJson()`/`generateImageJson()`を公開、AI呼び出しは必ずこれ経由 |
-| [analysisAgents.js](server/analysisAgents.js) | `runConditionAgent`（状態・欠陥検出）、`runMarketTrendAgent`/`runCompetitorAgent`（市場トレンド・競合比較）、`scoreListing`（LLM不使用の決定的スコア計算） |
+| [aiProvider.js](server/aiProvider.js) | `.env`の`AI_PROVIDER`(`gemini`/`groq`)で[geminiClient.js](server/geminiClient.js)/[groqClient.js](server/groqClient.js)切替。`generateJson()`/`generateImageJson(promptText, images)`を公開、AI呼び出しは必ずこれ経由。`images`は`[{base64Image, mimeType}, ...]`（1枚以上）で、複数枚を1回のAI呼び出しにまとめて渡し1つの結果に統合させる |
+| [analysisAgents.js](server/analysisAgents.js) | `runConditionAgent(images)`（状態・欠陥検出、複数枚対応）、`runMarketTrendAgent`/`runCompetitorAgent`（市場トレンド・競合比較。類似出品0件時も空リストとして必ず実行しdemandLevel等を返す）、`scoreListing`（LLM不使用の決定的スコア計算） |
 | [priceStats.js](server/priceStats.js) | IQR外れ値除去`removeOutliersByIQR()` |
 | [ebayAuth.js](server/ebayAuth.js) | eBay OAuth共通処理。`getEbayEnvConfig(environment)`が`'SANDBOX'`/`'PRODUCTION'`ごとのbaseUrl/authUrl/クライアントID等（`EBAY_SANDBOX_*`/`EBAY_PRODUCTION_*`）を解決し、`getAppAccessToken`/`getUserAccessToken`/`exchangeAuthCodeForTokens`/`getEbayUsername`は全て`environment`引数必須。`getAppAccessToken`/`getUserAccessToken`は[ebayTokenCache.js](server/ebayTokenCache.js)でトークンをキャッシュし、有効期限内は再取得（ネットワーク往復）をスキップする。`getUserAccessToken(userId, environment)`は`ebay_connections`のrefresh_tokenで取得（`userId`省略時`.env`の`EBAY_USER_REFRESH_TOKEN`、`setup:policies`ローカル専用、`environment`省略時`.env`の`EBAY_ENV`）。`USER_SCOPES`(出品/Policy用、refresh grantで常用)と`AUTH_SCOPES`(初回同意専用、`commerce.identity.readonly`追加)を分離—混ぜると既存接続の更新が未同意スコープエラーで壊れるため |
 | [ebayConnectionsRepository.js](server/ebayConnectionsRepository.js) | `ebay_connections`のCRUD、全関数`environment`引数必須（1ユーザーがSandbox/Production同時接続可）。`getEbayConnection`/`getEbayRefreshToken`/`setEbayConnection`/`getAllEbayConnections`(両環境まとめて取得)/`deleteEbayConnectionsByUsername`(環境問わずusername一致で削除) |

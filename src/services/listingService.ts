@@ -14,11 +14,11 @@ async function authHeaders(): Promise<Record<string, string>> {
 }
 
 // 開発用モック: バックエンドを起動せずに画像解析結果を模擬する
-export const mockAnalyzeImage = async (imageFile: File): Promise<ProductData> => {
+export const mockAnalyzeImage = async (imageFiles: File[]): Promise<ProductData> => {
   await new Promise((resolve) => setTimeout(resolve, 800));
   return {
     ...mockProductData,
-    imageUrl: URL.createObjectURL(imageFile),
+    imageUrls: imageFiles.map((file) => URL.createObjectURL(file)),
   };
 };
 
@@ -30,11 +30,14 @@ export const mockPublishItem = async (
   return { success: true, listingId: `MOCK-${Date.now()}` };
 };
 
-// 1. 画像をバックエンドへ送りAI解析（基本抽出＋商品状態エージェント）を行い、
-//    続けて価格・市場トレンド・競合比較・総合スコアの分析も取得してProductDataを組み立てる
-export const analyzeImageWithAI = async (imageFile: File): Promise<ProductData> => {
+// 1. 画像(複数枚可)をバックエンドへ送りAI解析（基本抽出＋商品状態エージェント）を行い、
+//    続けて価格・市場トレンド・競合比較・総合スコアの分析も取得してProductDataを組み立てる。
+//    複数枚渡した場合、AIは全ての画像を1つの商品情報に統合して解析する（角度違いの写真を想定）。
+export const analyzeImageWithAI = async (imageFiles: File[]): Promise<ProductData> => {
   const formData = new FormData();
-  formData.append('image', imageFile);
+  for (const file of imageFiles) {
+    formData.append('images', file);
+  }
 
   const response = await fetch(`${BACKEND_URL}/analyze-image`, {
     method: 'POST',
@@ -62,17 +65,25 @@ export const analyzeImageWithAI = async (imageFile: File): Promise<ProductData> 
   const title = aiResult.title || '';
   const description = aiResult.description || '';
 
-  // 価格調査・市場トレンド・競合比較・総合スコアをまとめて取得
+  // 価格調査・市場トレンド・競合比較・総合スコアをまとめて取得。
+  // 検索キーワードはtitle（eBayで検索されやすい単語を含むようAIが生成したSEOタイトル）を優先する。
+  // brand+modelだと、AIがブランド・型番を読み取れず"Unbranded"/"Does not apply"のような
+  // 汎用値になった場合に無意味な検索語になり、eBay検索が0件→分析全体がスキップされてしまうため。
+  const fallbackKeywords = `${aiResult.brand} ${aiResult.model}`.trim();
   const analysisResult = await estimatePrice(
-    `${aiResult.brand} ${aiResult.model}`,
+    title || fallbackKeywords || 'item',
     aiResult.condition || 'USED_EXCELLENT',
     { title, description, aspects },
     conditionAssessment
   );
 
+  // Supabase Storageへのアップロードに成功していれば公開URL、失敗した分だけローカルのblob:にフォールバック
+  // （aiResult.imageUrlsは失敗した画像がnullのまま返ってくるためindexを揃えて対応させる）
+  const uploadedUrls: (string | null)[] = Array.isArray(aiResult.imageUrls) ? aiResult.imageUrls : [];
+  const imageUrls = imageFiles.map((file, i) => uploadedUrls[i] || URL.createObjectURL(file));
+
   return {
-    // Supabase Storageへのアップロードに成功していれば公開URL、失敗時のみローカルのblob:にフォールバック
-    imageUrl: aiResult.imageUrl || URL.createObjectURL(imageFile),
+    imageUrls,
     title,
     brand: aiResult.brand || '',
     model: aiResult.model || '',

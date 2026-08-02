@@ -47,7 +47,8 @@ export interface ListingAnalysis {
 
 // 出品ウィザードで扱う商品データ本体
 export interface ProductData {
-  imageUrl?: string;
+  // 複数枚対応（1枚以上）。先頭が代表画像として扱われる
+  imageUrls: string[];
   title: string;
   brand: string;
   model: string;

@@ -1,7 +1,7 @@
 import type { ProductData } from '../types/listing';
 
 // バックエンド未起動時にウィザードの動作確認を行うためのサンプルデータ
-export const mockProductData: Omit<ProductData, 'imageUrl'> = {
+export const mockProductData: Omit<ProductData, 'imageUrls'> = {
   title: 'Sony WH-1000XM5 Wireless Noise Cancelling Headphones - Black',
   brand: 'Sony',
   model: 'WH-1000XM5',

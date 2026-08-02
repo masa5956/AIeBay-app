@@ -47,6 +47,9 @@ export default function App() {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [loadingText, setLoadingText] = useState<string>('');
   const [productData, setProductData] = useState<ProductData | null>(null);
+  // 現在の出品案に使っている元画像ファイル一式（追加撮影時に再解析するため保持しておく）
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const MAX_PHOTOS = 8; // /api/analyze-imageのMAX_ANALYZE_IMAGESと合わせる
   // 完了・失敗トースト通知
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   // 出品作業キャンセルの確認ダイアログ表示中かどうか
@@ -100,15 +103,17 @@ export default function App() {
     if (session) refreshListings();
   }, [session]);
 
-  // 画像アップロード処理
-  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
+  // 画像一式(files)でAI解析を実行し、結果をproductDataに反映する共通処理。
+  // 初回の撮影・アップロード時と、Step2からの追加撮影時の両方から呼ばれる
+  // （追加撮影時はexisting+newの全画像を毎回渡し、AIに1つの商品情報として再構成させる）。
+  const runAnalysis = async (files: File[]) => {
     setIsLoading(true);
-    setLoadingText('AIが画像から文字・属性を抽出中...');
+    setLoadingText(
+      files.length > 1 ? `AIが${files.length}枚の画像から文字・属性を抽出中...` : 'AIが画像から文字・属性を抽出中...'
+    );
     try {
-      const result = useMockAnalysis ? await mockAnalyzeImage(file) : await analyzeImageWithAI(file);
+      const result = useMockAnalysis ? await mockAnalyzeImage(files) : await analyzeImageWithAI(files);
+      setSelectedFiles(files);
       setProductData(result);
       setStep(2);
     } catch (err) {
@@ -116,6 +121,26 @@ export default function App() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // Step1: 初回の撮影・アップロード
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []).slice(0, MAX_PHOTOS);
+    e.target.value = ''; // 同じファイルを連続選択しても onChange が発火するようにリセット
+    if (files.length === 0) return;
+    runAnalysis(files);
+  };
+
+  // Step2: 「追加で撮影/アップロードする」— 既存の写真に追加し、全画像で再解析する
+  const handleAddPhotos = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newFiles = Array.from(e.target.files || []);
+    e.target.value = '';
+    if (newFiles.length === 0) return;
+    const combined = [...selectedFiles, ...newFiles].slice(0, MAX_PHOTOS);
+    if (combined.length >= MAX_PHOTOS && selectedFiles.length + newFiles.length > MAX_PHOTOS) {
+      setFeedback({ type: 'error', message: `写真は最大${MAX_PHOTOS}枚までです。超過分は追加されませんでした` });
+    }
+    runAnalysis(combined);
   };
 
   // ステップ間を移動する（解析結果が無いうちはStep2以降へは移動できない）
@@ -148,6 +173,7 @@ export default function App() {
         setIsListingMode(false);
         setStep(1);
         setProductData(null);
+        setSelectedFiles([]);
       }
     } catch (err) {
       setFeedback({ type: 'error', message: '出品処理に失敗しました' });
@@ -161,6 +187,7 @@ export default function App() {
     setIsListingMode(false);
     setStep(1);
     setProductData(null);
+    setSelectedFiles([]);
   };
 
 // VITE_SUPABASE_URL/VITE_SUPABASE_ANON_KEYが未設定のまま本番ビルドされた場合、
@@ -237,6 +264,8 @@ export default function App() {
                 productData={productData}
                 onChange={setProductData}
                 onUpdateAspect={updateAspectValue}
+                onAddPhotos={handleAddPhotos}
+                canAddMorePhotos={selectedFiles.length < MAX_PHOTOS}
                 onBack={() => goToStep(1)}
                 onNext={() => setStep(3)}
               />

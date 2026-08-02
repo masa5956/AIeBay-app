@@ -2,9 +2,14 @@ import { generateJson, generateImageJson } from './aiProvider.js';
 
 // =================================================================
 // 商品状態・欠陥検出エージェント（画像を見て状態を厳しく査定する）
+// images: [{ base64Image, mimeType }, ...]（1枚以上。複数枚の場合は全体を通して評価する）
 // =================================================================
-export async function runConditionAgent(base64Image, mimeType) {
-  const prompt = `あなたはeBayの検品担当者です。この商品画像を厳しくチェックし、コンディションを評価してください。
+export async function runConditionAgent(images) {
+  const multiNote = images.length > 1
+    ? `\n複数枚（${images.length}枚）の画像が提供されています。写真ごとに違う角度・部位が写っている` +
+      '可能性があるため、全ての画像を通して確認できた傷・汚れ・欠損を漏れなく反映してください。'
+    : '';
+  const prompt = `あなたはeBayの検品担当者です。この商品画像を厳しくチェックし、コンディションを評価してください。${multiNote}
 JSON形式のみで出力:
 {
   "conditionScore": 100が新品同様・0が大きく破損の0-100整数,
@@ -13,7 +18,7 @@ JSON形式のみで出力:
   "notes": "総合的な状態に関する1〜2文の所見（日本語）"
 }`;
 
-  return generateImageJson(prompt, base64Image, mimeType);
+  return generateImageJson(prompt, images);
 }
 
 // =================================================================
@@ -22,9 +27,14 @@ JSON形式のみで出力:
 // 「現在の競合出品状況」に基づく推定である点をUI上にも明示すること。
 // =================================================================
 export async function runMarketTrendAgent(keywords, items) {
+  const noDataNote = items.length === 0
+    ? '\n注意: 類似出品が1件も見つかりませんでした。この場合はdemandLevelを"Medium"とし、trendNoteでは' +
+      '「類似出品が見つからなかったため需要を推定できません。検索キーワードやカテゴリの見直しを推奨します」' +
+      'という趣旨を日本語で述べてください。'
+    : '';
   const prompt = `以下は、eBayで"${keywords}"を検索した際に現在出品中の類似商品一覧です（売却済みデータではありません）。
 出品一覧: ${JSON.stringify(items)}
-
+${noDataNote}
 この一覧から、出品件数や価格のばらつきをもとに需要・競合状況を分析してください。JSON形式のみで出力:
 {
   "demandLevel": "High、Medium、Lowのいずれか（出品件数の少なさ・価格の安定度から判断。出品が少なく価格が安定していればHigh寄り）",
@@ -38,10 +48,15 @@ export async function runMarketTrendAgent(keywords, items) {
 // 競合比較エージェント（自分の出品案と競合出品を比較し差別化を提案）
 // =================================================================
 export async function runCompetitorAgent(productDraft, items) {
+  const noDataNote = items.length === 0
+    ? '\n注意: 比較対象となる競合出品が見つかりませんでした。suggestionsではタイトル・説明文・商品仕様自体の' +
+      '一般的な改善提案を、competitivePriceNoteでは「競合データが無いため価格の妥当性は判断できません」' +
+      'という趣旨を日本語で述べてください。'
+    : '';
   const prompt = `自分がこれから出品しようとしている商品と、eBayで既に出品されている類似の競合商品一覧を比較してください。
 自分の商品案: ${JSON.stringify(productDraft)}
 競合出品（上位${items.length}件）: ${JSON.stringify(items)}
-
+${noDataNote}
 タイトル・価格の観点で、競合と比べてどう差別化・改善すべきかを提案してください。JSON形式のみで出力:
 {
   "suggestions": ["具体的な改善提案を日本語で箇条書き（2〜4個程度）"],

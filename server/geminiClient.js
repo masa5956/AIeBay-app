@@ -19,14 +19,19 @@ export async function generateJson(promptText) {
   return JSON.parse(response.text || '{}');
 }
 
-// 画像+テキストのプロンプトをGeminiに投げ、JSONとしてパースして返す共通ヘルパー
-export async function generateImageJson(promptText, base64Image, mimeType) {
+// 画像(複数可)+テキストのプロンプトをGeminiに投げ、JSONとしてパースして返す共通ヘルパー。
+// images: [{ base64Image, mimeType }, ...]（1枚以上）。複数枚の場合、Geminiは1回の呼び出しで
+// 全画像をまとめて解釈できるため、角度違いの写真から一つの結果を合成させることができる。
+export async function generateImageJson(promptText, images) {
+  const imageParts = images.map(({ base64Image, mimeType }) => ({
+    inlineData: { mimeType, data: base64Image },
+  }));
   const response = await genAI.models.generateContent({
     model: GEMINI_MODEL,
     contents: [
       {
         role: 'user',
-        parts: [{ text: promptText }, { inlineData: { mimeType, data: base64Image } }],
+        parts: [{ text: promptText }, ...imageParts],
       },
     ],
     config: { responseMimeType: 'application/json' },

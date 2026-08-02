@@ -109,6 +109,10 @@ const EBAY_ANALYSIS_PROMPT = `この商品画像を分析し、eBay出品用の�
 実際のeBay出品ページの「Item Specifics（商品仕様）」欄を参考に、写っている商品のカテゴリから推測できる
 具体的な仕様項目をできるだけ多く含めてください。ブランドやモデルが商品自体から読み取れない場合は
 "Unbranded" / "Does not apply" を使ってください。
+複数枚の画像が提供されている場合は、同一商品を異なる角度・部位から撮影したものです。全ての画像を
+総合して1つの商品情報（1つのtitle・description・aspects）にまとめてください（画像ごとに別々の結果を
+出力しないこと）。ラベルや型番の刻印が一部の画像にしか写っていない場合は、その画像から読み取った情報も
+反映してください。
 
 出力フォーマット:
 {
@@ -136,23 +140,30 @@ const EBAY_ANALYSIS_PROMPT = `この商品画像を分析し、eBay出品用の�
 （例: 家電なら「Power Source」「Connectivity」、衣類なら「Style」「Pattern」など）。
 値が不明な項目はキーごと省略してください。`;
 
-app.post('/api/analyze-image', requireAuth, upload.single('image'), async (req, res) => {
+// MAX_ANALYZE_IMAGESより多い枚数を送ると、multerが「Unexpected field」ではなく
+// LIMIT_UNEXPECTED_FILEエラーを返す（末尾のエラーハンドラーでJSON化される）
+const MAX_ANALYZE_IMAGES = 8;
+
+app.post('/api/analyze-image', requireAuth, upload.array('images', MAX_ANALYZE_IMAGES), async (req, res) => {
   try {
-    if (!req.file) {
+    if (!req.files || req.files.length === 0) {
       return res.status(400).json({ error: '画像ファイルが添付されていません。' });
     }
 
-    // 画像をBase64変換
-    const base64Image = req.file.buffer.toString('base64');
+    // 複数枚を1回のAI呼び出しでまとめて解析できるよう、base64配列に変換
+    const images = req.files.map((file) => ({
+      base64Image: file.buffer.toString('base64'),
+      mimeType: file.mimetype,
+    }));
 
-    // 基本情報抽出・商品状態エージェント・画像アップロードを並列実行（高速レスポンスのため）
-    const [parsedContent, conditionAssessment, imageUrl] = await Promise.all([
-      generateImageJson(EBAY_ANALYSIS_PROMPT, base64Image, req.file.mimetype),
-      runConditionAgent(base64Image, req.file.mimetype),
-      uploadProductImage(req.file.buffer, req.file.mimetype),
+    // 基本情報抽出・商品状態エージェント・Supabaseへの画像アップロード(全枚数分)を並列実行
+    const [parsedContent, conditionAssessment, imageUrls] = await Promise.all([
+      generateImageJson(EBAY_ANALYSIS_PROMPT, images),
+      runConditionAgent(images),
+      Promise.all(req.files.map((file) => uploadProductImage(file.buffer, file.mimetype))),
     ]);
 
-    return res.json({ ...parsedContent, conditionAssessment, imageUrl });
+    return res.json({ ...parsedContent, conditionAssessment, imageUrls });
   } catch (error) {
     console.error('AI Analysis Error:', error);
     return res.status(500).json({ error: 'AI解析に失敗しました。' });
@@ -197,15 +208,20 @@ app.post('/api/estimate-price', requireAuth, async (req, res) => {
       .filter((p) => p > 0)
       .sort((a, b) => a - b);
 
-    if (prices.length === 0) {
-      return res.json({ suggested_price: 0, min_price: 0, max_price: 0 });
+    // 類似商品が1件も見つからない場合でも価格を0にするだけで、市場トレンド・競合比較・
+    // 総合スコアの計算自体は必ず行う（以前はここで即returnしていたため、ブランド・型番を
+    // AIが読み取れず検索語が"Unbranded Does not apply"のようになった場合に分析全体が
+    // 空になってしまっていた）。
+    let min_price = 0;
+    let max_price = 0;
+    let suggested_price = 0;
+    if (prices.length > 0) {
+      // IQRアルゴリズムで外れ値を除去してから統計計算（中央値・最安・最高）
+      const filteredPrices = removeOutliersByIQR(prices);
+      min_price = filteredPrices[0];
+      max_price = filteredPrices[filteredPrices.length - 1];
+      suggested_price = filteredPrices[Math.floor(filteredPrices.length / 2)];
     }
-
-    // IQRアルゴリズムで外れ値を除去してから統計計算（中央値・最安・最高）
-    const filteredPrices = removeOutliersByIQR(prices);
-    const min_price = filteredPrices[0];
-    const max_price = filteredPrices[filteredPrices.length - 1];
-    const suggested_price = filteredPrices[Math.floor(filteredPrices.length / 2)];
 
     // 市場トレンド・競合比較エージェントに渡す簡易出品一覧（タイトル・価格のみ）
     const simplifiedItems = items
@@ -276,10 +292,15 @@ app.post('/api/publish-ebay', requireAuth, async (req, res) => {
     const condition = VALID_CONDITIONS.includes(productData.condition) ? productData.condition : 'USED_EXCELLENT';
 
     // フロントエンドが送ってくるblob:（Supabaseアップロード失敗時のフォールバック等）は
-    // eBayから取得不可なため、http(s)で始まらないURLはプレースホルダー画像にフォールバックする。
-    const imageUrl = typeof productData.imageUrl === 'string' && productData.imageUrl.startsWith('http')
-      ? productData.imageUrl
-      : 'https://placehold.co/500x500.png?text=No+Image';
+    // eBayから取得不可なため、http(s)で始まらないURLは除外する。1件も残らなければ
+    // プレースホルダー画像にフォールバックする。eBayは複数枚のimageUrlsをそのままギャラリーとして扱う。
+    const validImageUrls = Array.isArray(productData.imageUrls)
+      ? productData.imageUrls.filter((url) => typeof url === 'string' && url.startsWith('http'))
+      : [];
+    const imageUrls = validImageUrls.length > 0
+      ? validImageUrls
+      : ['https://placehold.co/500x500.png?text=No+Image'];
+    const imageUrl = imageUrls[0]; // 自アプリの出品履歴(listings)には代表画像1枚のみ保存する
 
     // Step2で確認・編集された商品仕様(Item Specifics)一覧をeBayのaspects形式に変換
     // eBayの商品仕様(Item Specifics)は1つの仕様名に複数の値を持てる仕様のため、
@@ -319,7 +340,7 @@ app.post('/api/publish-ebay', requireAuth, async (req, res) => {
           title: productData.title,
           aspects,
           description: productData.description,
-          imageUrls: [imageUrl],
+          imageUrls,
         },
         condition,
         availability: {

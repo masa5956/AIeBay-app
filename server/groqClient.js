@@ -31,10 +31,15 @@ export async function generateJson(promptText) {
   return parseJsonLoose(response.choices[0]?.message?.content);
 }
 
-// 画像+テキストのプロンプトをGroqに投げ、JSONとしてパースして返す共通ヘルパー
+// 画像(複数可)+テキストのプロンプトをGroqに投げ、JSONとしてパースして返す共通ヘルパー。
+// images: [{ base64Image, mimeType }, ...]（1枚以上）。
 // 注意: Groqの一部モデルは画像入力とresponse_format(json_object)の併用に非対応のため、
 // ここではresponse_formatを指定せず、プロンプト側の指示＋緩いパースでJSONを取り出す。
-export async function generateImageJson(promptText, base64Image, mimeType) {
+export async function generateImageJson(promptText, images) {
+  const imageParts = images.map(({ base64Image, mimeType }) => ({
+    type: 'image_url',
+    image_url: { url: `data:${mimeType};base64,${base64Image}` },
+  }));
   const response = await groq.chat.completions.create({
     model: GROQ_MODEL,
     messages: [
@@ -42,7 +47,7 @@ export async function generateImageJson(promptText, base64Image, mimeType) {
         role: 'user',
         content: [
           { type: 'text', text: `${promptText}\n\n出力は前置きや説明を一切付けず、JSONオブジェクトのみを出力してください。` },
-          { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Image}` } },
+          ...imageParts,
         ],
       },
     ],
