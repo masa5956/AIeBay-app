@@ -18,6 +18,8 @@ services:
         sync: false
       - key: AI_PROVIDER
         value: gemini
+      - key: TEXT_AI_PROVIDER
+        value: gemini
       - key: GEMINI_API_KEY
         sync: false
       - key: GEMINI_MODEL
@@ -25,22 +27,35 @@ services:
       - key: GROQ_API_KEY
         sync: false
       - key: GROQ_MODEL
-        value: meta-llama/llama-4-scout-17b-16e-instruct
-      - key: EBAY_CLIENT_ID
+        value: qwen/qwen3.6-27b
+      - key: GROQ_TEXT_MODEL
+        value: llama-3.3-70b-versatile
+      # Sandbox/Productionを設定タブから即時切替できるよう環境ごとに分離（ebayAuth.js参照）。
+      # 価格調査(/api/estimate-price)はEBAY_PRODUCTION_CLIENT_ID/_SECRETが設定されていないと
+      # 常にSandbox(実在庫がほぼ無い)にフォールバックしてしまうため、Production側も必ず設定すること。
+      - key: EBAY_SANDBOX_CLIENT_ID
         sync: false
-      - key: EBAY_CLIENT_SECRET
+      - key: EBAY_SANDBOX_CLIENT_SECRET
         sync: false
-      - key: EBAY_RU_NAME
+      - key: EBAY_SANDBOX_RU_NAME
         sync: false
-      - key: EBAY_USER_REFRESH_TOKEN
+      - key: EBAY_PRODUCTION_CLIENT_ID
         sync: false
-      - key: EBAY_ENV
-        value: SANDBOX
-      - key: EBAY_MERCHANT_LOCATION_KEY
-        value: DEFAULT_LOCATION
-      - key: EBAY_FULFILLMENT_POLICY_ID
+      - key: EBAY_PRODUCTION_CLIENT_SECRET
         sync: false
-      - key: EBAY_RETURN_POLICY_ID
+      - key: EBAY_PRODUCTION_RU_NAME
         sync: false
-      - key: EBAY_PAYMENT_POLICY_ID
+      - key: EBAY_LOCATION_ADDRESS_LINE1
+        sync: false
+      - key: EBAY_LOCATION_CITY
+        sync: false
+      - key: EBAY_LOCATION_STATE_OR_PROVINCE
+        sync: false
+      - key: EBAY_LOCATION_POSTAL_CODE
+        sync: false
+      - key: EBAY_LOCATION_COUNTRY
+        sync: false
+      - key: EBAY_DELETION_VERIFICATION_TOKEN
+        sync: false
+      - key: EBAY_DELETION_ENDPOINT_URL
         sync: false
