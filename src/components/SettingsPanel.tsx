@@ -30,6 +30,15 @@ export default function SettingsPanel({ useMockAnalysis, onToggleMockAnalysis, o
     refreshStatus();
   }, []);
 
+  // eBayログイン用に新規タブを開いた後、そのタブでの操作完了後にこのタブへフォーカスが
+  // 戻ったタイミングで接続状態を自動的に再取得する（新規タブ側でリロード等をしなくても
+  // 設定タブの表示が最新化されるようにするため）
+  useEffect(() => {
+    const handleFocus = () => refreshStatus();
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, []);
+
   const selectedInfo = status ? (selectedEnv === 'SANDBOX' ? status.sandbox : status.production) : null;
   const isActiveEnv = status?.activeEnv === selectedEnv;
 
@@ -38,10 +47,13 @@ export default function SettingsPanel({ useMockAnalysis, onToggleMockAnalysis, o
     setActionError('');
     try {
       const url = await getEbayAuthUrl(selectedEnv);
-      // eBayの同意画面へ遷移し、完了後は/api/ebay/callbackが処理する
-      window.location.href = url;
+      // 新規タブでeBayの同意画面を開く（元のアプリタブはそのまま残す）。
+      // 完了後は/api/ebay/callbackが新規タブ側を処理し、このタブへフォーカスが戻った時点で
+      // 上のfocusリスナーが最新状態を再取得する。
+      window.open(url, '_blank', 'noopener,noreferrer');
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'eBay認証URLの取得に失敗しました');
+    } finally {
       setIsConnecting(false);
     }
   };

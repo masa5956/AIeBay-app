@@ -521,7 +521,8 @@ app.get('/api/ebay/callback', async (req, res) => {
 
     return res.send(
       `<h1>eBayとの連携が完了しました（${environment}）</h1>
-       <p>このタブを閉じてアプリに戻ってください。再起動不要ですぐに出品できます。</p>`
+       <p>このタブは自動的に閉じます。閉じない場合は手動で閉じてアプリのタブに戻ってください。再起動不要ですぐに出品できます。</p>
+       <script>setTimeout(() => window.close(), 1500);</script>`
     );
   } catch (err) {
     console.error('eBay OAuth Callback Error:', err?.response?.data || err);
