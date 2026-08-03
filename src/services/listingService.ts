@@ -6,7 +6,6 @@ import type {
   ListingDetail,
   RecentListing,
   ResearchArticle,
-  ResearchCategory,
   SalesSummary,
 } from '../types/app';
 import { mockProductData } from '../mock/mockData';
@@ -193,25 +192,14 @@ export const searchListings = async (query: string): Promise<RecentListing[]> =>
   return data.listings;
 };
 
-// 4c. リサーチタブ向け: カテゴリ別の最新記事一覧を取得する（RSSフィードベース、AI呼び出しなし）
-export const getResearchArticles = async (category: ResearchCategory): Promise<ResearchArticle[]> => {
-  const response = await fetch(`${BACKEND_URL}/research/articles?category=${encodeURIComponent(category)}`, {
-    headers: await authHeaders(),
-  });
-  if (!response.ok) {
-    throw new Error('リサーチ記事の取得に失敗しました');
-  }
-  const data = await response.json();
-  return data.articles;
-};
-
-// 4d. リサーチタブ向け: 固定カテゴリにない任意のキーワードで記事を検索する
+// 4c. リサーチタブ向け: キーワードで記事を検索する（固定カテゴリ・自由入力とも共通、AI呼び出しなし）
 export const searchResearchArticles = async (query: string): Promise<ResearchArticle[]> => {
   const response = await fetch(`${BACKEND_URL}/research/articles?q=${encodeURIComponent(query)}`, {
     headers: await authHeaders(),
   });
   if (!response.ok) {
-    throw new Error('リサーチ記事の検索に失敗しました');
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || 'リサーチ記事の検索に失敗しました');
   }
   const data = await response.json();
   return data.articles;

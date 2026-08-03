@@ -1,9 +1,15 @@
 export type TabType = 'home' | 'research' | 'analytics' | 'settings';
 
-// リサーチタブ: 対応カテゴリ
-export type ResearchCategory = 'cosmetics' | 'games' | 'gadgets';
+// リサーチタブ: カテゴリ＝検索クエリのラベル付け。isCustom=trueはユーザーが自由検索から
+// 追加したカテゴリ（削除可能、localStorageに永続化）、falseはアプリ標準の固定カテゴリ。
+export interface ResearchCategoryDef {
+  key: string;
+  label: string;
+  query: string;
+  isCustom: boolean;
+}
 
-// リサーチタブ: RSSフィードから取得した記事1件
+// リサーチタブ: ニュースAPI(NewsData.io)から取得した記事1件
 export interface ResearchArticle {
   title: string;
   link: string;

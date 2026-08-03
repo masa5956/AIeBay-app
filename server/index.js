@@ -29,7 +29,7 @@ import { saveListing, getRecentListings, getAllListings, getSalesSummary, getAna
 import { removeOutliersByIQR } from './priceStats.js';
 import { createOAuthState, consumeOAuthState } from './oauthStateStore.js';
 import { verifyEbayNotificationSignature } from './ebayNotificationVerifier.js';
-import { getResearchArticles, searchResearchArticles, RESEARCH_CATEGORIES } from './researchFeeds.js';
+import { searchResearchArticles } from './researchFeeds.js';
 
 dotenv.config();
 
@@ -592,25 +592,15 @@ app.get('/api/listings/search', requireAuth, async (req, res) => {
 // =================================================================
 app.get('/api/research/articles', requireAuth, async (req, res) => {
   try {
-    const category = String(req.query.category || '');
     const keyword = String(req.query.q || '').trim();
-
-    let articles;
-    if (category) {
-      if (!RESEARCH_CATEGORIES.includes(category)) {
-        return res.status(400).json({ error: '未対応のカテゴリです。' });
-      }
-      articles = await getResearchArticles(category);
-    } else if (keyword) {
-      articles = await searchResearchArticles(keyword);
-    } else {
-      return res.status(400).json({ error: 'category または q のいずれかを指定してください。' });
+    if (!keyword) {
+      return res.status(400).json({ error: '検索キーワード(q)を指定してください。' });
     }
-
+    const articles = await searchResearchArticles(keyword);
     return res.json({ articles });
   } catch (error) {
     console.error('リサーチ記事の取得に失敗しました:', error);
-    return res.status(500).json({ error: 'リサーチ記事の取得に失敗しました。' });
+    return res.status(500).json({ error: error.message || 'リサーチ記事の取得に失敗しました。' });
   }
 });
 
