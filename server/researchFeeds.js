@@ -52,3 +52,27 @@ export async function getResearchArticles(category) {
     .sort((a, b) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime())
     .slice(0, 30);
 }
+
+// 任意のキーワードで記事を検索する（カテゴリ選択にない自由入力向け）。
+// 固定カテゴリと違い事前にRSS取得元を用意できないため、任意の検索語に対応できる
+// Google ニュースの検索結果RSSのみを使う。
+export async function searchResearchArticles(query) {
+  const trimmed = String(query || '').trim();
+  if (!trimmed) {
+    throw new Error('検索キーワードを入力してください');
+  }
+
+  const url = `https://news.google.com/rss/search?q=${encodeURIComponent(trimmed)}&hl=ja&gl=JP&ceid=JP:ja`;
+  const feed = await parser.parseURL(url);
+
+  return (feed.items || [])
+    .map((item) => ({
+      title: item.title || '',
+      link: item.link || '',
+      pubDate: item.pubDate || item.isoDate || '',
+      source: 'Google ニュース',
+    }))
+    .filter((article) => article.title && article.link)
+    .sort((a, b) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime())
+    .slice(0, 30);
+}

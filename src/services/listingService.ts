@@ -205,6 +205,18 @@ export const getResearchArticles = async (category: ResearchCategory): Promise<R
   return data.articles;
 };
 
+// 4d. リサーチタブ向け: 固定カテゴリにない任意のキーワードで記事を検索する
+export const searchResearchArticles = async (query: string): Promise<ResearchArticle[]> => {
+  const response = await fetch(`${BACKEND_URL}/research/articles?q=${encodeURIComponent(query)}`, {
+    headers: await authHeaders(),
+  });
+  if (!response.ok) {
+    throw new Error('リサーチ記事の検索に失敗しました');
+  }
+  const data = await response.json();
+  return data.articles;
+};
+
 // 5. 分析タブ向けの月別出品額推移・カテゴリ別出品額構成をバックエンド(DB)から取得する
 export const getAnalytics = async (): Promise<AnalyticsData> => {
   const response = await fetch(`${BACKEND_URL}/analytics`, { headers: await authHeaders() });

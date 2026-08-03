@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { ExternalLink, Loader2 } from 'lucide-react';
+import { ExternalLink, Loader2, Search } from 'lucide-react';
 import type { ResearchArticle, ResearchCategory } from '../types/app';
-import { getResearchArticles } from '../services/listingService';
+import { getResearchArticles, searchResearchArticles } from '../services/listingService';
 
 const CATEGORIES: { key: ResearchCategory; label: string }[] = [
   { key: 'cosmetics', label: 'コスメ' },
@@ -10,9 +10,15 @@ const CATEGORIES: { key: ResearchCategory; label: string }[] = [
 ];
 
 // リサーチタブ: カテゴリ別の最新記事一覧（RSSフィードベース、AI呼び出しなし）。
+// 固定カテゴリボタンに加え、任意のキーワードでも検索できる（固定カテゴリにない
+// キーワードはGoogleニュース検索RSS経由、searchResearchArticlesが対応）。
 // 記事をタップすると実際の記事URLへ新規タブで遷移する。
 export default function ResearchPanel() {
-  const [category, setCategory] = useState<ResearchCategory>('cosmetics');
+  // category !== null の間はカテゴリモード、search !== null の間は自由検索モード
+  // （どちらか一方だけがアクティブになる）
+  const [category, setCategory] = useState<ResearchCategory | null>('cosmetics');
+  const [searchInput, setSearchInput] = useState('');
+  const [activeSearch, setActiveSearch] = useState<string | null>(null);
   const [articles, setArticles] = useState<ResearchArticle[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
@@ -21,7 +27,10 @@ export default function ResearchPanel() {
     let cancelled = false;
     setIsLoading(true);
     setError('');
-    getResearchArticles(category)
+
+    const request = activeSearch ? searchResearchArticles(activeSearch) : category ? getResearchArticles(category) : Promise.resolve([]);
+
+    request
       .then((data) => {
         if (!cancelled) setArticles(data);
       })
@@ -34,21 +43,51 @@ export default function ResearchPanel() {
     return () => {
       cancelled = true;
     };
-  }, [category]);
+  }, [category, activeSearch]);
+
+  const handleSelectCategory = (key: ResearchCategory) => {
+    setCategory(key);
+    setActiveSearch(null);
+    setSearchInput('');
+  };
+
+  const handleSearchSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = searchInput.trim();
+    if (!trimmed) return;
+    setCategory(null);
+    setActiveSearch(trimmed);
+  };
 
   return (
     <div className="space-y-4">
       <div className="pt-2">
         <h1 className="text-lg font-black text-slate-800">リサーチ</h1>
-        <p className="text-xs text-slate-400 mt-0.5">カテゴリ別の最新ニュースをチェックできます</p>
+        <p className="text-xs text-slate-400 mt-0.5">カテゴリ別、または任意のキーワードで最新ニュースをチェックできます</p>
       </div>
 
-      <div className="flex gap-2">
+      <form onSubmit={handleSearchSubmit} className="flex gap-2">
+        <input
+          type="text"
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+          placeholder="キーワードで検索（例: ニベア リップ 海外）"
+          className="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-500"
+        />
+        <button
+          type="submit"
+          className="bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-3 flex items-center justify-center transition"
+        >
+          <Search size={16} />
+        </button>
+      </form>
+
+      <div className="flex gap-2 overflow-x-auto pb-0.5">
         {CATEGORIES.map(({ key, label }) => (
           <button
             key={key}
-            onClick={() => setCategory(key)}
-            className={`px-3 py-1.5 rounded-full text-xs font-bold transition ${
+            onClick={() => handleSelectCategory(key)}
+            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-bold transition ${
               category === key ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
             }`}
           >
@@ -56,6 +95,12 @@ export default function ResearchPanel() {
           </button>
         ))}
       </div>
+
+      {activeSearch && (
+        <p className="text-xs text-slate-500">
+          「<span className="font-bold">{activeSearch}</span>」の検索結果
+        </p>
+      )}
 
       <div className="space-y-2">
         {isLoading ? (
