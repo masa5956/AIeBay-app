@@ -634,7 +634,13 @@ app.post('/api/publish-ebay', expensiveLimiter, requireAuth, async (req, res) =>
       listingId,
     });
   } catch (error) {
-    console.error('eBay Publishing Error:', error?.response?.data || error);
+    // console.errorのデフォルトのオブジェクト表示は深い階層(errors[].parameters等)を
+    // "[Array]"のように省略してしまい、原因調査に必要な情報が欠けることがあるため、
+    // 構造化データはJSON.stringifyで全階層を出力する。
+    console.error(
+      'eBay Publishing Error:',
+      error?.response?.data ? JSON.stringify(error.response.data, null, 2) : error
+    );
     return res.status(500).json({ error: 'eBayへの出品処理に失敗しました。' });
   }
 });
