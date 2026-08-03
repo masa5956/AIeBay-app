@@ -106,47 +106,40 @@ export async function ensureReturnPolicy(token, environment) {
   return createRes.data.returnPolicyId;
 }
 
-// 出荷元ロケーションを取得、無ければ.envの住所情報から新規作成する。
-// 住所自体はアプリ全体で共有の出荷元（EBAY_LOCATION_*）を使う前提の簡易実装
-// （ユーザーごとに異なる出荷元住所を持たせるにはUIでの住所入力機能の追加が別途必要）。
-// SandboxとProductionは完全に別のeBayアカウント空間のため、同じロケーションキー名でも衝突しない。
-export async function ensureMerchantLocation(token, environment) {
+// 出荷元ロケーションを取得、無ければ渡された住所情報から新規作成する。
+// まずそのeBayアカウントに既存の有効なロケーションが無いか確認する（ユーザーがSeller Hubで
+// 既に作成済みならそれをそのまま使う＝アプリ側での住所の収集を避けられる）。無ければ、
+// ユーザーごとに設定タブで入力・暗号化保存された住所(userSettingsRepository.js、
+// addressCrypto.jsでAES-256-GCM暗号化)からロケーションを新規作成する。
+// SandboxとProductionは完全に別のeBayアカウント空間のため、同じキー名でも衝突しない。
+export async function ensureMerchantLocation(token, environment, address) {
   const { baseUrl } = getEbayEnvConfig(environment);
-  const merchantLocationKey = process.env.EBAY_MERCHANT_LOCATION_KEY || 'DEFAULT_LOCATION';
 
-  const exists = await axios
-    .get(`${baseUrl}/sell/inventory/v1/location/${merchantLocationKey}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-    .then(() => true)
-    .catch((err) => {
-      if (err?.response?.status === 404) return false;
-      throw err;
-    });
+  const listRes = await axios.get(`${baseUrl}/sell/inventory/v1/location`, {
+    headers: { Authorization: `Bearer ${token}` },
+    params: { limit: 100 },
+  });
+  const existing = (listRes.data?.locations || []).find(
+    (loc) => loc.merchantLocationStatus === 'ENABLED'
+  );
 
-  if (exists) {
-    console.log(`既存の出荷元ロケーションを使用します: ${merchantLocationKey}`);
-    return merchantLocationKey;
+  if (existing) {
+    console.log(`既存の出荷元ロケーションを使用します: ${existing.merchantLocationKey}`);
+    return existing.merchantLocationKey;
   }
 
-  const {
-    EBAY_LOCATION_ADDRESS_LINE1,
-    EBAY_LOCATION_CITY,
-    EBAY_LOCATION_STATE_OR_PROVINCE,
-    EBAY_LOCATION_POSTAL_CODE,
-    EBAY_LOCATION_COUNTRY,
-  } = process.env;
-
-  if (!EBAY_LOCATION_ADDRESS_LINE1 || !EBAY_LOCATION_CITY || !EBAY_LOCATION_POSTAL_CODE) {
-    console.warn(
-      `出荷元ロケーション「${merchantLocationKey}」が存在しません。` +
-      'EBAY_LOCATION_ADDRESS_LINE1 / EBAY_LOCATION_CITY / EBAY_LOCATION_STATE_OR_PROVINCE / ' +
-      'EBAY_LOCATION_POSTAL_CODE / EBAY_LOCATION_COUNTRY を.envに設定して再実行するか、' +
-      'eBay Seller Hubで手動作成してください。'
+  if (!address?.addressLine1 || !address?.city || !address?.postalCode || !address?.country) {
+    // 以前はここで警告ログのみ出してmerchantLocationKeyを返していたため、実際にはeBay側に
+    // ロケーションを作成していないのに呼び出し元(setEbayConnection)が「成功した」として
+    // このキーをDBに保存してしまい、出品時にerrorId 25002/25805（Location not found）になる
+    // 不具合があった。作成できなかった場合は例外を投げ、DBに嘘の値を保存させないようにする。
+    throw new Error(
+      `出荷元ロケーションがeBay側に存在せず、かつ新規作成もできません。` +
+      '設定タブで出荷元住所を入力してから、「eBayでログイン」をやり直してください。'
     );
-    return merchantLocationKey;
   }
 
+  const merchantLocationKey = process.env.EBAY_MERCHANT_LOCATION_KEY || 'DEFAULT_LOCATION';
   await axios.post(
     `${baseUrl}/sell/inventory/v1/location/${merchantLocationKey}`,
     {
@@ -155,11 +148,11 @@ export async function ensureMerchantLocation(token, environment) {
       locationTypes: ['WAREHOUSE'],
       location: {
         address: {
-          addressLine1: EBAY_LOCATION_ADDRESS_LINE1,
-          city: EBAY_LOCATION_CITY,
-          stateOrProvince: EBAY_LOCATION_STATE_OR_PROVINCE,
-          postalCode: EBAY_LOCATION_POSTAL_CODE,
-          country: EBAY_LOCATION_COUNTRY || 'US',
+          addressLine1: address.addressLine1,
+          city: address.city,
+          stateOrProvince: address.stateOrProvince || undefined,
+          postalCode: address.postalCode,
+          country: address.country,
         },
       },
     },
@@ -173,11 +166,11 @@ export async function ensureMerchantLocation(token, environment) {
 // 指定したアクセストークン・環境のeBayアカウントに対し、Business Policies・出荷元ロケーションを
 // 一括セットアップする（get-or-createなので何度呼んでも安全）。
 // アプリ内「eBayでログイン」の直後に自動実行される他、npm run setup:policiesからも呼ばれる。
-export async function setupEbayPoliciesForToken(token, environment) {
+export async function setupEbayPoliciesForToken(token, environment, address) {
   await ensureBusinessPolicyOptIn(token, environment);
   const fulfillmentPolicyId = await ensureFulfillmentPolicy(token, environment);
   const returnPolicyId = await ensureReturnPolicy(token, environment);
-  const merchantLocationKey = await ensureMerchantLocation(token, environment);
+  const merchantLocationKey = await ensureMerchantLocation(token, environment, address);
   return { fulfillmentPolicyId, returnPolicyId, merchantLocationKey };
 }
 
@@ -188,7 +181,16 @@ async function main() {
   const environment = process.env.EBAY_ENV === 'PRODUCTION' ? 'PRODUCTION' : 'SANDBOX';
   console.log(`eBay Business Policies / 出荷元ロケーションのセットアップを開始します...（環境: ${environment}）`);
   const token = await getUserAccessToken(undefined, environment);
-  const { fulfillmentPolicyId, returnPolicyId } = await setupEbayPoliciesForToken(token, environment);
+  // このスクリプトはアプリのDB(user_settings)を介さないローカル手動実行専用のため、
+  // 住所は.envのEBAY_LOCATION_*から組み立てる（アプリ本体は設定タブでユーザーごとに入力する）。
+  const address = {
+    addressLine1: process.env.EBAY_LOCATION_ADDRESS_LINE1,
+    city: process.env.EBAY_LOCATION_CITY,
+    stateOrProvince: process.env.EBAY_LOCATION_STATE_OR_PROVINCE,
+    postalCode: process.env.EBAY_LOCATION_POSTAL_CODE,
+    country: process.env.EBAY_LOCATION_COUNTRY || 'US',
+  };
+  const { fulfillmentPolicyId, returnPolicyId } = await setupEbayPoliciesForToken(token, environment, address);
 
   updateEnvValue('EBAY_FULFILLMENT_POLICY_ID', fulfillmentPolicyId);
   updateEnvValue('EBAY_RETURN_POLICY_ID', returnPolicyId);

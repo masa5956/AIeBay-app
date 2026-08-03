@@ -16,6 +16,10 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
+      # publishable/anonキー。POST /api/settings/shipping-address/reveal（住所再表示のパスワード
+      # 再認証）専用クライアントに使う。VITE_SUPABASE_ANON_KEYと同じ値でよい。
+      - key: SUPABASE_ANON_KEY
+        sync: false
       - key: AI_PROVIDER
         value: gemini
       - key: TEXT_AI_PROVIDER
@@ -58,4 +62,10 @@ services:
       - key: EBAY_DELETION_VERIFICATION_TOKEN
         sync: false
       - key: EBAY_DELETION_ENDPOINT_URL
+        sync: false
+      # ユーザーごとの出荷元住所(個人情報)をDB保存前にAES-256-GCMで暗号化する鍵。
+      # `openssl rand -base64 32` で生成。未設定だと住所の保存・取得自体がエラーになる。
+      - key: SHIPPING_ADDRESS_ENCRYPTION_KEY
+        sync: false
+      - key: SERPER_API_KEY
         sync: false

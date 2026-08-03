@@ -1,5 +1,7 @@
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 import multer from 'multer';
 import axios from 'axios';
@@ -13,19 +15,37 @@ import {
   exchangeAuthCodeForTokens,
   getEbayUsername,
 } from './ebayAuth.js';
+import { getCategorySuggestions, getItemAspectsForCategory } from './ebayTaxonomy.js';
 import {
   getEbayConnection,
   getAllEbayConnections,
   setEbayConnection,
+  deleteEbayConnection,
   deleteEbayConnectionsByUsername,
 } from './ebayConnectionsRepository.js';
-import { getActiveEbayEnv, setActiveEbayEnv } from './userSettingsRepository.js';
+import { clearCachedUserToken } from './ebayTokenCache.js';
+import {
+  getActiveEbayEnv,
+  setActiveEbayEnv,
+  getShippingAddress,
+  setShippingAddress,
+  clearShippingAddress,
+} from './userSettingsRepository.js';
 import { setupEbayPoliciesForToken } from './setupPolicies.js';
 import { requireAuth } from './authMiddleware.js';
 import { AI_PROVIDER, TEXT_AI_PROVIDER, generateImageJson } from './aiProvider.js';
 import { runConditionAgent, runMarketResearchAgent, runMarketTrendAgent, runCompetitorAgent, scoreListing } from './analysisAgents.js';
-import { supabase, PRODUCT_IMAGES_BUCKET } from './supabaseClient.js';
-import { saveListing, getRecentListings, getAllListings, getSalesSummary, getAnalytics, getListingByListingId } from './listingsRepository.js';
+import { supabase, supabaseAnon, PRODUCT_IMAGES_BUCKET } from './supabaseClient.js';
+import {
+  saveListing,
+  getRecentListings,
+  getAllListings,
+  getSalesSummary,
+  getAnalytics,
+  getListingByListingId,
+  updateListingStatus,
+  updateListingQuantity,
+} from './listingsRepository.js';
 import { removeOutliersByIQR } from './priceStats.js';
 import { createOAuthState, consumeOAuthState } from './oauthStateStore.js';
 import { verifyEbayNotificationSignature } from './ebayNotificationVerifier.js';
@@ -54,7 +74,19 @@ app.use(cors({
     return callback(new Error('CORSポリシーにより許可されていないオリジンです'));
   },
 }));
-app.use(express.json());
+// セキュリティヘッダー(X-Content-Type-Options, X-Frame-Options, HSTS等)を付与する。
+// CSPはデフォルトのままだと/api/ebay/callback等が返すインラインscript付きHTMLを壊すため無効化する
+// （このアプリのAPIはJSONが主でHTMLレスポンスはこの2エンドポイントのみの例外的な用途のため）。
+app.use(helmet({ contentSecurityPolicy: false }));
+app.use(express.json({ limit: '256kb' }));
+
+// レートリミッター。CSRFトークンの代わりにBearerトークン認証を使っている（cookieセッションが
+// 無いためCSRFの実害が薄い）が、ブルートフォース・AIクォータ濫用・OAuth関連の乱打は別問題のため
+// 個別に制限する。
+const generalLimiter = rateLimit({ windowMs: 60 * 1000, max: 100, standardHeaders: true, legacyHeaders: false });
+const expensiveLimiter = rateLimit({ windowMs: 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false });
+const addressRevealLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false });
+app.use('/api/', generalLimiter);
 
 // HTMLに埋め込む文字列をエスケープする（反射型XSS対策）
 function escapeHtml(str) {
@@ -156,7 +188,7 @@ const EBAY_ANALYSIS_PROMPT = `この商品画像を分析し、eBay出品用の�
 // LIMIT_UNEXPECTED_FILEエラーを返す（末尾のエラーハンドラーでJSON化される）
 const MAX_ANALYZE_IMAGES = 8;
 
-app.post('/api/analyze-image', requireAuth, upload.array('images', MAX_ANALYZE_IMAGES), async (req, res) => {
+app.post('/api/analyze-image', expensiveLimiter, requireAuth, upload.array('images', MAX_ANALYZE_IMAGES), async (req, res) => {
   try {
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({ error: '画像ファイルが添付されていません。' });
@@ -322,10 +354,36 @@ app.post('/api/estimate-price', requireAuth, async (req, res) => {
   }
 });
 
+// オークション形式の期間はeBayが対応する5値のみ許可する（30日・GTCはオークションでは非対応）
+const AUCTION_DURATIONS = new Set(['DAYS_1', 'DAYS_3', 'DAYS_5', 'DAYS_7', 'DAYS_10']);
+
+// validateShippingAddressと同型（coerce→範囲チェック→{auction}か{error}を返す）。
+// eBayへの実際のAPI呼び出しの前に検証し、無駄なInventory Item作成を防ぐ。
+function validateAuctionSettings(pricing) {
+  const duration = pricing?.auction?.duration;
+  const startingBid = Number(pricing?.auction?.startingBid);
+  const reservePriceRaw = pricing?.auction?.reservePrice;
+
+  if (!AUCTION_DURATIONS.has(duration)) {
+    return { error: 'オークションの期間は1/3/5/7/10日のいずれかを指定してください。' };
+  }
+  if (!Number.isFinite(startingBid) || startingBid <= 0) {
+    return { error: '開始価格は0より大きい数値で指定してください。' };
+  }
+  let reservePrice;
+  if (reservePriceRaw !== undefined && reservePriceRaw !== null && reservePriceRaw !== '') {
+    reservePrice = Number(reservePriceRaw);
+    if (!Number.isFinite(reservePrice) || reservePrice < startingBid) {
+      return { error: '最低落札価格は開始価格以上の数値で指定してください。' };
+    }
+  }
+  return { auction: { duration, startingBid, ...(reservePrice !== undefined ? { reservePrice } : {}) } };
+}
+
 // =================================================================
 // 3. eBay 出品実行エンドポイント (/api/publish-ebay)
 // =================================================================
-app.post('/api/publish-ebay', requireAuth, async (req, res) => {
+app.post('/api/publish-ebay', expensiveLimiter, requireAuth, async (req, res) => {
   try {
     const environment = await getActiveEbayEnv(req.userId);
     const connection = await getEbayConnection(req.userId, environment);
@@ -339,14 +397,42 @@ app.post('/api/publish-ebay', requireAuth, async (req, res) => {
         error: 'Business Policiesの準備が完了していません。設定タブから再度「eBayでログイン」を行ってください。',
       });
     }
+    // merchant_location_keyが未設定のまま出品を試みると、eBay側に実在しないロケーションキー
+    // （旧コードは'DEFAULT_LOCATION'という文字列に決め打ちでフォールバックしていた）で
+    // Offerをpublishすることになり、errorId 25002「Location information not found」で
+    // 失敗する。ここで事前に弾き、原因が分かるメッセージを返す。
+    if (!connection.merchant_location_key) {
+      return res.status(400).json({
+        error:
+          '出荷元ロケーションの準備が完了していません。設定タブで出荷元住所を入力し、' +
+          '再度「eBayでログイン」を行ってください。',
+      });
+    }
 
     const { baseUrl } = getEbayEnvConfig(environment);
     const productData = req.body;
     const sku = `SKU-${Date.now()}`;
 
     const userAccessToken = await getUserAccessToken(req.userId, environment);
-    const merchantLocationKey = connection.merchant_location_key || 'DEFAULT_LOCATION';
+    const merchantLocationKey = connection.merchant_location_key;
     const categoryId = productData.categoryId || '112529'; // カテゴリー未指定時のフォールバック（テスト用ID）
+
+    // 在庫数（出品時点で販売可能な数量）。範囲外・非整数はデフォルト1に丸める
+    const quantity = Number.isInteger(productData.quantity) && productData.quantity >= 0 && productData.quantity <= 9999
+      ? productData.quantity
+      : 1;
+
+    // 販売方法（固定価格 / オークション）。オークションの場合は期間・開始価格・(任意の)最低落札価格を
+    // eBayへの呼び出し前に検証し、無駄なInventory Item作成を防ぐ。
+    const isAuction = productData.pricing?.format === 'AUCTION';
+    let auctionSettings = null;
+    if (isAuction) {
+      const { auction, error: auctionError } = validateAuctionSettings(productData.pricing);
+      if (auctionError) {
+        return res.status(400).json({ error: auctionError });
+      }
+      auctionSettings = auction;
+    }
 
     // AIが生成したconditionがアプリ内で認識している4値のいずれとも一致しない場合のデフォルト
     let conditionKey = CONDITION_INFO[productData.condition] ? productData.condition : 'USED_EXCELLENT';
@@ -409,18 +495,26 @@ app.post('/api/publish-ebay', requireAuth, async (req, res) => {
         aspects[key] = values;
       }
     }
-    // フォールバックのcategoryId(112529)が必須とするItem Specifics一式
-    // （eBay Taxonomy APIのget_item_aspects_for_categoryで確認済み: Brand, Color, Connectivity, Model, Type）。
-    // AIが検出できなかった項目は既定値で埋め、出品失敗を防ぐ。
-    const REQUIRED_ASPECT_DEFAULTS = {
-      Brand: productData.brand || 'Unbranded',
-      Model: productData.model || 'N/A',
-      Color: 'Does not apply',
-      Type: 'Does not apply',
-      Connectivity: 'Does not apply',
-    };
-    for (const [key, defaultValue] of Object.entries(REQUIRED_ASPECT_DEFAULTS)) {
-      if (!aspects[key]) aspects[key] = [defaultValue];
+    // カテゴリー別の必須Item Specificsを、eBay Taxonomy API(get_item_aspects_for_category)から
+    // 動的に取得して検証する（旧実装はcategoryId=112529専用の固定5項目の穴埋めだったため、他カテゴリーでは
+    // 不正確だった）。フロント側(Step2/Step4)で事前に埋めさせているため、通常ここで引っかかるのは
+    // キャッシュ不整合等の異常系のみ。取得自体の失敗（Taxonomy APIの障害等）はfail-open
+    // （Condition検証と同じ挙動＝ログのみで続行）とし、インフラ都合で出品自体をブロックしない。
+    try {
+      const aspectDefs = await getItemAspectsForCategory(environment, categoryId);
+      const missingRequired = aspectDefs
+        .filter((d) => d.required && !(aspects[d.name]?.length > 0))
+        .map((d) => d.name);
+      if (missingRequired.length > 0) {
+        return res.status(400).json({
+          error: `必須の商品仕様が未入力です: ${missingRequired.join(', ')}`,
+        });
+      }
+    } catch (aspectErr) {
+      console.error(
+        'カテゴリ別必須Item Specificsの取得に失敗しました（未検証のまま出品を続行します）:',
+        aspectErr?.response?.data || aspectErr
+      );
     }
 
     // Step 1: Inventory Item の作成 (PUT /sell/inventory/v1/inventory_item/{sku})
@@ -435,7 +529,7 @@ app.post('/api/publish-ebay', requireAuth, async (req, res) => {
         },
         condition,
         availability: {
-          shipToLocationAvailability: { quantity: 1 },
+          shipToLocationAvailability: { quantity },
         },
       },
       {
@@ -448,20 +542,31 @@ app.post('/api/publish-ebay', requireAuth, async (req, res) => {
     );
 
     // Step 2: Offer の作成 (POST /sell/inventory/v1/offer)
+    // 固定価格とオークションでpricingSummaryの形が異なる（オークションは開始価格/最低落札価格、
+    // 固定価格は通常の価格1本）。createOfferはeBay Sell Inventory APIがformat: 'AUCTION'を
+    // 直接サポートしているため、Trading API等の別APIへの切り替えは不要。
     const offerResponse = await axios.post(
       `${baseUrl}/sell/inventory/v1/offer`,
       {
         sku,
         marketplaceId: 'EBAY_US',
-        format: 'FIXED_PRICE',
-        availableQuantity: 1,
+        format: isAuction ? 'AUCTION' : 'FIXED_PRICE',
+        availableQuantity: quantity,
         categoryId,
-        pricingSummary: {
-          price: {
-            value: productData.pricing.suggestedPrice.toString(),
-            currency: 'USD',
-          },
-        },
+        pricingSummary: isAuction
+          ? {
+              auctionStartPrice: { value: auctionSettings.startingBid.toString(), currency: 'USD' },
+              ...(auctionSettings.reservePrice !== undefined
+                ? { auctionReservePrice: { value: auctionSettings.reservePrice.toString(), currency: 'USD' } }
+                : {}),
+            }
+          : {
+              price: {
+                value: productData.pricing.suggestedPrice.toString(),
+                currency: 'USD',
+              },
+            },
+        ...(isAuction ? { listingDuration: auctionSettings.duration } : {}),
         listingPolicies: {
           fulfillmentPolicyId: connection.fulfillment_policy_id,
           returnPolicyId: connection.return_policy_id,
@@ -502,8 +607,11 @@ app.post('/api/publish-ebay', requireAuth, async (req, res) => {
         userId: req.userId,
         sku,
         listingId,
+        offerId,
+        quantity,
+        format: isAuction ? 'AUCTION' : 'FIXED_PRICE',
         title: productData.title,
-        price: productData.pricing.suggestedPrice,
+        price: isAuction ? auctionSettings.startingBid : productData.pricing.suggestedPrice,
         imageUrl,
         category: aspects.Type?.[0] || 'Other',
         description: productData.description,
@@ -520,6 +628,148 @@ app.post('/api/publish-ebay', requireAuth, async (req, res) => {
   } catch (error) {
     console.error('eBay Publishing Error:', error?.response?.data || error);
     return res.status(500).json({ error: 'eBayへの出品処理に失敗しました。' });
+  }
+});
+
+// =================================================================
+// カテゴリー候補・カテゴリー別Item Specifics取得エンドポイント
+// eBay Taxonomy APIの薄いラッパー。第三者サイトからのカテゴリー手動カタログ化ではなく、
+// eBay自身の常に最新のデータを都度取得する（server/ebayTaxonomy.js側で数時間キャッシュ）。
+// =================================================================
+app.get('/api/ebay/category-suggestions', requireAuth, async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    if (!q) {
+      return res.status(400).json({ error: '検索キーワード(q)を指定してください。' });
+    }
+    const environment = await getActiveEbayEnv(req.userId);
+    const suggestions = await getCategorySuggestions(environment, q);
+    return res.json({ suggestions });
+  } catch (error) {
+    console.error('カテゴリー候補の取得に失敗しました:', error?.response?.data || error);
+    return res.status(500).json({ error: 'カテゴリー候補の取得に失敗しました。' });
+  }
+});
+
+app.get('/api/ebay/category-aspects', requireAuth, async (req, res) => {
+  try {
+    const categoryId = String(req.query.categoryId || '').trim();
+    if (!categoryId) {
+      return res.status(400).json({ error: 'categoryIdを指定してください。' });
+    }
+    const environment = await getActiveEbayEnv(req.userId);
+    const aspects = await getItemAspectsForCategory(environment, categoryId);
+    return res.json({ aspects });
+  } catch (error) {
+    console.error('カテゴリー別Item Specificsの取得に失敗しました:', error?.response?.data || error);
+    return res.status(500).json({ error: 'カテゴリー別Item Specificsの取得に失敗しました。' });
+  }
+});
+
+// =================================================================
+// 出品キャンセル・手動売却済みマーク・在庫数変更エンドポイント
+// いずれも「自分の出品」であることをgetListingByListingIdの所有権(user_id)確認で担保してから処理する。
+// =================================================================
+
+// 出品を取り消す。withdrawOfferはOfferオブジェクトを残したまま出品を終了する
+// （eBay Seller Hubの「出品を終了」と同じ挙動、後で再出品も可能）。既に公開中のOfferには
+// 直接使えないdeleteOfferではなくこちらを使う。
+app.post('/api/listings/:id/cancel', requireAuth, async (req, res) => {
+  try {
+    const row = await getListingByListingId(req.userId, req.params.id);
+    if (!row) {
+      return res.status(404).json({ error: '出品情報が見つかりませんでした。' });
+    }
+    if (row.status !== 'ACTIVE') {
+      return res.status(400).json({ error: 'この出品は既に終了しています。' });
+    }
+    if (!row.offer_id) {
+      return res.status(400).json({
+        error: 'この出品はアプリからは取り消せません（データ移行前の出品のため）。eBay Seller Hubから直接操作してください。',
+      });
+    }
+
+    const environment = await getActiveEbayEnv(req.userId);
+    const { baseUrl } = getEbayEnvConfig(environment);
+    const userAccessToken = await getUserAccessToken(req.userId, environment);
+    await axios.post(
+      `${baseUrl}/sell/inventory/v1/offer/${row.offer_id}/withdraw`,
+      {},
+      { headers: { Authorization: `Bearer ${userAccessToken}` } }
+    );
+
+    await updateListingStatus(req.userId, req.params.id, 'CANCELLED');
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('出品キャンセルに失敗しました:', error?.response?.data || error);
+    return res.status(500).json({ error: '出品キャンセルに失敗しました。' });
+  }
+});
+
+// 手動で「売却済み」としてマークする。eBay側は変更しない（実際の売却はeBay上で起きているため）。
+// eBayの売却通知webhookが無く売上集計が常に0円になる既知の制限を、手動運用で実用的に解消する。
+app.post('/api/listings/:id/mark-sold', requireAuth, async (req, res) => {
+  try {
+    const row = await getListingByListingId(req.userId, req.params.id);
+    if (!row) {
+      return res.status(404).json({ error: '出品情報が見つかりませんでした。' });
+    }
+    if (row.status !== 'ACTIVE') {
+      return res.status(400).json({ error: 'この出品は既に終了しています。' });
+    }
+    await updateListingStatus(req.userId, req.params.id, 'SOLD');
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('売却済みマークに失敗しました:', error);
+    return res.status(500).json({ error: '売却済みマークに失敗しました。' });
+  }
+});
+
+// 在庫数(quantity)を変更する。bulk_update_price_quantityはInventory ItemとOfferを1回のAPI呼び出しで
+// 同時更新できる、公開中リスティングの在庫数変更に特化したeBay APIのため、
+// 個別にinventory_item/offerをPUTし直すより安全（更新漏れ・不整合が起きない）。
+app.patch('/api/listings/:id/quantity', requireAuth, async (req, res) => {
+  try {
+    const quantity = Number(req.body?.quantity);
+    if (!Number.isInteger(quantity) || quantity < 0 || quantity > 9999) {
+      return res.status(400).json({ error: '在庫数は0〜9999の整数で指定してください。' });
+    }
+
+    const row = await getListingByListingId(req.userId, req.params.id);
+    if (!row) {
+      return res.status(404).json({ error: '出品情報が見つかりませんでした。' });
+    }
+    if (row.status !== 'ACTIVE') {
+      return res.status(400).json({ error: 'この出品は既に終了しているため在庫数を変更できません。' });
+    }
+    if (!row.offer_id) {
+      return res.status(400).json({
+        error: 'この出品はアプリからは在庫数を変更できません（データ移行前の出品のため）。',
+      });
+    }
+
+    const environment = await getActiveEbayEnv(req.userId);
+    const { baseUrl } = getEbayEnvConfig(environment);
+    const userAccessToken = await getUserAccessToken(req.userId, environment);
+    await axios.post(
+      `${baseUrl}/sell/inventory/v1/bulk_update_price_quantity`,
+      {
+        requests: [
+          {
+            offers: [{ offerId: row.offer_id, availableQuantity: quantity }],
+            shipToLocationAvailability: { quantity },
+            sku: row.sku,
+          },
+        ],
+      },
+      { headers: { Authorization: `Bearer ${userAccessToken}`, 'Content-Type': 'application/json' } }
+    );
+
+    await updateListingQuantity(req.userId, req.params.id, quantity);
+    return res.json({ success: true, quantity });
+  } catch (error) {
+    console.error('在庫数の変更に失敗しました:', error?.response?.data || error);
+    return res.status(500).json({ error: '在庫数の変更に失敗しました。' });
   }
 });
 
@@ -625,6 +875,9 @@ app.get('/api/listings/:id', requireAuth, async (req, res) => {
       category: row.category,
       description: row.description || '',
       aspects: row.aspects || {},
+      quantity: Number.isInteger(row.quantity) ? row.quantity : 1,
+      format: row.listing_format || 'FIXED_PRICE',
+      canManage: !!row.offer_id,
     });
   } catch (error) {
     console.error('出品詳細の取得に失敗しました:', error);
@@ -653,12 +906,21 @@ app.get('/api/analytics', requireAuth, async (req, res) => {
 //    ?env=SANDBOX|PRODUCTION でどちらの環境に接続するかを指定（省略時SANDBOX）。
 //    どのアプリユーザー・環境の同意かを後で判別できるよう、"userId:environment"をstateに埋め込む
 //    （eBayが同意後にそのままcallbackへ引き回してくれる標準的なOAuthの仕組み）。
-app.get('/api/ebay/auth-url', requireAuth, (req, res) => {
+app.get('/api/ebay/auth-url', expensiveLimiter, requireAuth, async (req, res) => {
   const environment = EBAY_ENVIRONMENTS.includes(req.query.env) ? req.query.env : 'SANDBOX';
   const { authUrl, clientId, ruName } = getEbayEnvConfig(environment);
   if (!clientId || !ruName) {
     return res.status(400).json({
       error: `EBAY_${environment}_CLIENT_ID / EBAY_${environment}_RU_NAME を.envに設定してください。`,
+    });
+  }
+
+  // ログイン直後にこのアカウント上へ出荷元ロケーションを自動作成するため、住所が未設定のまま
+  // 接続させると「作成できず出品時にエラー」という分かりにくい失敗になる。先にここで弾く。
+  const address = await getShippingAddress(req.userId).catch(() => null);
+  if (!address) {
+    return res.status(400).json({
+      error: '先に設定タブで出荷元住所を入力してください。',
     });
   }
 
@@ -679,18 +941,44 @@ app.get('/api/ebay/auth-url', requireAuth, (req, res) => {
 //    このURLがRuNameの「Your auth accepted URL」として登録されている必要がある。
 //    ブラウザの素のリダイレクトでAuthorizationヘッダーは付かないため、認証はstateパラメータ
 //    （①で埋め込んだ"userId:environment"）で行う。
+// OAuthコールバックの結果ページ共通レイアウト。エラー時に「閉じる」ボタンすら無い
+// 行き止まりのページになっていた（新規タブで開くため、ユーザーが手動でタブを閉じて
+// 元のアプリタブに戻る必要があったが、その導線が無かった）ため、常にボタンを用意する。
+function oauthResultPage({ title, message, autoClose = false }) {
+  return `
+    <div style="font-family: sans-serif; max-width: 480px; margin: 40px auto; padding: 0 16px; text-align: center;">
+      <h1 style="font-size: 18px;">${title}</h1>
+      <p style="color: #475569; font-size: 14px; line-height: 1.6;">${message}</p>
+      <button
+        onclick="window.close()"
+        style="margin-top: 16px; padding: 10px 24px; border-radius: 8px; border: none; background: #1e293b; color: white; font-weight: bold; font-size: 13px; cursor: pointer;"
+      >このタブを閉じる</button>
+    </div>
+    ${autoClose ? '<script>setTimeout(() => window.close(), 1500);</script>' : ''}
+  `;
+}
+
 app.get('/api/ebay/callback', async (req, res) => {
   const { code, error, state } = req.query;
 
   if (error || !code) {
-    return res.status(400).send(`<h1>eBay認可に失敗しました</h1><p>${error ? escapeHtml(error) : 'codeがありません'}</p>`);
+    return res.status(400).send(oauthResultPage({
+      title: 'eBay認可に失敗しました',
+      message: error ? escapeHtml(error) : 'codeがありません',
+    }));
   }
 
   // stateは①で発行した使い捨てnonce。ここで一度きり消費し、対応するuserId/environmentを復元する
-  // （不正・期限切れ・二重使用のnonceは復元できずnullになる）。
+  // （不正・期限切れ・二重使用のnonceは復元できずnullになる）。よくある原因: 10分のTTL切れ、
+  // 同じリンクを2回開いた（二重消費）、または開発中にバックエンドが再起動しstateがメモリごと
+  // 消えた（このstoreはDBではなくメモリ上のみで保持されているため）。
   const stateEntry = typeof state === 'string' ? consumeOAuthState(state) : null;
   if (!stateEntry || !EBAY_ENVIRONMENTS.includes(stateEntry.environment)) {
-    return res.status(400).send('<h1>セッションが無効です</h1><p>リンクの有効期限が切れたか、既に使用済みです。アプリの設定タブから改めてログインし直してください。</p>');
+    return res.status(400).send(oauthResultPage({
+      title: 'セッションが無効です',
+      message:
+        'リンクの有効期限が切れたか、既に使用済みです。このタブを閉じてアプリの設定タブから改めて「eBayでログイン」をやり直してください。',
+    }));
   }
   const { userId, environment } = stateEntry;
 
@@ -719,22 +1007,41 @@ app.get('/api/ebay/callback', async (req, res) => {
     // 注意: 認可コード交換直後のaccess_token(tokens.access_token)ではSell Account APIの
     // 呼び出しが不安定になることがあるため、保存直後のrefresh_tokenからrefresh token grantで
     // 改めて取得したaccess_token（実際の出品時と同じ経路）を使う。
+    let policySetupError = null;
     try {
       const accessToken = await getUserAccessToken(userId, environment);
-      const policyInfo = await setupEbayPoliciesForToken(accessToken, environment);
+      const address = await getShippingAddress(userId);
+      const policyInfo = await setupEbayPoliciesForToken(accessToken, environment, address);
       await setEbayConnection(userId, environment, { refreshToken: tokens.refresh_token, ...policyInfo });
     } catch (policyErr) {
       console.error('Business Policy自動セットアップに失敗しました:', policyErr?.response?.data || policyErr);
+      policySetupError = policyErr?.response?.data?.errors?.[0]?.message || policyErr.message;
     }
 
-    return res.send(
-      `<h1>eBayとの連携が完了しました（${environment}）</h1>
-       <p>このタブは自動的に閉じます。閉じない場合は手動で閉じてアプリのタブに戻ってください。再起動不要ですぐに出品できます。</p>
-       <script>setTimeout(() => window.close(), 1500);</script>`
-    );
+    // アカウント連携自体(refresh_token保存)は成功していても、Business Policy/出荷元ロケーションの
+    // 自動セットアップが失敗しているとこの後の出品がerrorId 25002等で失敗する。以前はここで
+    // 常に「連携完了」の成功メッセージだけを返していたため、この種の失敗が起きていることに
+    // ユーザーが気づけず、出品時に初めてエラーに遭遇していた。ここで明示的に警告する。
+    if (policySetupError) {
+      return res.send(oauthResultPage({
+        title: `eBayアカウントの連携は完了しましたが、一部設定に失敗しました（${environment}）`,
+        message:
+          `Business Policy・出荷元ロケーションの自動セットアップに失敗しました: ${escapeHtml(policySetupError)}` +
+          '<br><br>出荷元住所が正しく保存されているか設定タブで確認のうえ、もう一度「eBayでログイン」をやり直してください。',
+      }));
+    }
+
+    return res.send(oauthResultPage({
+      title: `eBayとの連携が完了しました（${environment}）`,
+      message: 'このタブは自動的に閉じます。閉じない場合は下のボタンで閉じてアプリのタブに戻ってください。再起動不要ですぐに出品できます。',
+      autoClose: true,
+    }));
   } catch (err) {
     console.error('eBay OAuth Callback Error:', err?.response?.data || err);
-    return res.status(500).send('<h1>トークン交換に失敗しました</h1><p>サーバーのログを確認してください。</p>');
+    return res.status(500).send(oauthResultPage({
+      title: 'トークン交換に失敗しました',
+      message: 'サーバーのログを確認してください。',
+    }));
   }
 });
 
@@ -776,6 +1083,129 @@ app.post('/api/ebay/active-env', requireAuth, async (req, res) => {
   } catch (error) {
     console.error('eBay環境切替に失敗しました:', error);
     return res.status(500).json({ error: 'eBay環境切替に失敗しました。' });
+  }
+});
+
+// ⑤ 指定環境のeBay連携を解除する。壊れた接続情報（実在しないmerchant_location_key等）を
+// 再接続前に確実にクリアする手段としても使う——setEbayConnectionはupsertのため、古い
+// fulfillment_policy_id/merchant_location_key等が新しい値で上書きされない限り残り続けてしまう。
+app.post('/api/ebay/disconnect', requireAuth, async (req, res) => {
+  try {
+    const { environment } = req.body;
+    if (!EBAY_ENVIRONMENTS.includes(environment)) {
+      return res.status(400).json({ error: 'environmentはSANDBOXまたはPRODUCTIONを指定してください。' });
+    }
+    await deleteEbayConnection(req.userId, environment);
+    clearCachedUserToken(req.userId, environment);
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('eBay連携の解除に失敗しました:', error);
+    return res.status(500).json({ error: 'eBay連携の解除に失敗しました。' });
+  }
+});
+
+// ⑤ 出荷元住所（ユーザーごと、暗号化して保存）。「eBayでログイン」時にこのアカウント上へ
+//    出荷元ロケーションとして自動作成されるため、接続前に設定しておく必要がある
+//    （未設定のままだとauth-urlが400を返す）。DBにはaddressCrypto.jsで暗号化した値のみが
+//    保存され、平文はレスポンス/リクエストの往復以外どこにも残らない（ログにも出力しない）。
+const COUNTRY_CODE_PATTERN = /^[A-Z]{2}$/;
+
+function validateShippingAddress(body) {
+  const addressLine1 = String(body.addressLine1 || '').trim();
+  const city = String(body.city || '').trim();
+  const stateOrProvince = String(body.stateOrProvince || '').trim();
+  const postalCode = String(body.postalCode || '').trim();
+  const country = String(body.country || '').trim().toUpperCase();
+
+  if (!addressLine1 || addressLine1.length > 200) {
+    return { error: '住所1行目は1〜200文字で入力してください。' };
+  }
+  if (!city || city.length > 100) {
+    return { error: '市区町村は1〜100文字で入力してください。' };
+  }
+  if (stateOrProvince.length > 100) {
+    return { error: '都道府県は100文字以内で入力してください。' };
+  }
+  if (!postalCode || postalCode.length > 20) {
+    return { error: '郵便番号は1〜20文字で入力してください。' };
+  }
+  if (!COUNTRY_CODE_PATTERN.test(country)) {
+    return { error: '国は「JP」「US」のようなISO 3166-1 alpha-2の2文字コードで入力してください。' };
+  }
+  return { address: { addressLine1, city, stateOrProvince, postalCode, country } };
+}
+
+// デフォルトでは平文住所を返さず、マスクされたプレビュー+hasAddressのみ返す（画面上のマスク表示だけでなく、
+// API境界自体でも「パスワード再認証を通さない限り平文住所がクライアントに届かない」ようにするため）。
+// 平文の取得は下のPOST /reveal（パスワード再認証必須）でのみ行う。
+app.get('/api/settings/shipping-address', requireAuth, async (req, res) => {
+  try {
+    const address = await getShippingAddress(req.userId);
+    if (!address) {
+      return res.json({ hasAddress: false, maskedPreview: null });
+    }
+    const maskedPreview = `${address.city || '???'} / ${address.country}`;
+    return res.json({ hasAddress: true, maskedPreview });
+  } catch (error) {
+    console.error('出荷元住所の取得に失敗しました:', error.message);
+    return res.status(500).json({ error: '出荷元住所の取得に失敗しました。' });
+  }
+});
+
+// パスワード再認証を経て初めて平文の住所を返す（要望「限界まで」に対応する、API境界での実質的なアクセス制御）。
+// 検証はsupabaseAnonクライアントでのsignInWithPasswordの成否のみを利用し、返ってくるセッションは
+// 破棄する（req.userIdのログインセッションを不用意に上書き・ローテーションしないため）。
+app.post('/api/settings/shipping-address/reveal', addressRevealLimiter, requireAuth, async (req, res) => {
+  try {
+    if (!supabase || !supabaseAnon) {
+      return res.status(500).json({ error: 'サーバー側の設定不備のため利用できません。' });
+    }
+    const password = String(req.body?.password || '');
+    if (!password) {
+      return res.status(400).json({ error: 'パスワードを入力してください。' });
+    }
+
+    const { data: userData, error: userError } = await supabase.auth.admin.getUserById(req.userId);
+    const email = userData?.user?.email;
+    if (userError || !email) {
+      return res.status(401).json({ error: '本人確認に失敗しました。再度ログインし直してください。' });
+    }
+
+    const { error: signInError } = await supabaseAnon.auth.signInWithPassword({ email, password });
+    if (signInError) {
+      return res.status(401).json({ error: 'パスワードが正しくありません。' });
+    }
+
+    const address = await getShippingAddress(req.userId);
+    return res.json({ address });
+  } catch (error) {
+    console.error('住所の再認証表示に失敗しました:', error.message);
+    return res.status(500).json({ error: '住所の再認証表示に失敗しました。' });
+  }
+});
+
+app.put('/api/settings/shipping-address', requireAuth, async (req, res) => {
+  const { address, error: validationError } = validateShippingAddress(req.body || {});
+  if (validationError) {
+    return res.status(400).json({ error: validationError });
+  }
+  try {
+    await setShippingAddress(req.userId, address);
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('出荷元住所の保存に失敗しました:', error.message);
+    return res.status(500).json({ error: '出荷元住所の保存に失敗しました。' });
+  }
+});
+
+// データ最小化のため、ユーザーが明示的に住所を削除できるようにする
+app.delete('/api/settings/shipping-address', requireAuth, async (req, res) => {
+  try {
+    await clearShippingAddress(req.userId);
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('出荷元住所の削除に失敗しました:', error.message);
+    return res.status(500).json({ error: '出荷元住所の削除に失敗しました。' });
   }
 });
 

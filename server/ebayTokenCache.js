@@ -29,3 +29,10 @@ export function setCachedUserToken(userId, environment, token, expiresInSeconds)
     expiresAt: Date.now() + expiresInSeconds * 1000 - SAFETY_MARGIN_MS,
   });
 }
+
+// eBay連携を解除した際、まだ有効期限内のキャッシュ済みaccess_tokenが残っていると、DBの
+// refresh_tokenを削除した後もその期限が切れるまで出品等のAPI呼び出しが動いてしまう
+// （解除したはずなのに動く、という分かりにくい状態になる）ため、解除操作と同時に破棄する。
+export function clearCachedUserToken(userId, environment) {
+  userTokenCache.delete(`${userId}:${environment}`);
+}

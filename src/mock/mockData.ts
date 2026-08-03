@@ -23,12 +23,14 @@ export const mockProductData: Omit<ProductData, 'imageUrls'> = {
     { key: 'Included Items', value: 'Headphones, Charging Cable, Carrying Case' },
   ],
   description: 'AIが解析した商品説明文（モック）です。ノイズキャンセリング機能付きワイヤレスヘッドホン。',
+  quantity: 1,
   pricing: {
     suggestedPrice: 249.99,
     minPrice: 199.0,
     maxPrice: 289.0,
     userPrice: 249.99,
     acceptOffer: true,
+    format: 'FIXED_PRICE',
   },
   analysis: {
     conditionAssessment: {

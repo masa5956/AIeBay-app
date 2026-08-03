@@ -1,4 +1,12 @@
-import type { CompetitorSuggestions, ConditionAssessment, MarketTrend, ProductAspect, ProductData } from '../types/listing';
+import type {
+  CategoryAspectDef,
+  CategorySuggestion,
+  CompetitorSuggestions,
+  ConditionAssessment,
+  MarketTrend,
+  ProductAspect,
+  ProductData,
+} from '../types/listing';
 import type {
   AnalyticsData,
   EbayEnvironment,
@@ -7,6 +15,8 @@ import type {
   RecentListing,
   ResearchArticle,
   SalesSummary,
+  ShippingAddress,
+  ShippingAddressStatus,
 } from '../types/app';
 import { mockProductData } from '../mock/mockData';
 import { supabase } from './supabaseClient';
@@ -98,6 +108,7 @@ export const analyzeImageWithAI = async (imageFiles: File[]): Promise<ProductDat
     categoryName: 'General',
     condition: aiResult.condition || 'USED_EXCELLENT',
     aspects,
+    quantity: 1,
     description,
     pricing: {
       suggestedPrice: analysisResult.suggestedPrice,
@@ -105,6 +116,7 @@ export const analyzeImageWithAI = async (imageFiles: File[]): Promise<ProductDat
       maxPrice: analysisResult.maxPrice,
       userPrice: analysisResult.suggestedPrice,
       acceptOffer: true,
+      format: 'FIXED_PRICE',
     },
     analysis: {
       conditionAssessment,
@@ -257,5 +269,125 @@ export const setActiveEbayEnv = async (environment: EbayEnvironment): Promise<vo
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
     throw new Error(data.error || 'eBay環境の切替に失敗しました');
+  }
+};
+
+// 9b. 指定環境のeBay連携を解除する（壊れた接続情報を再接続前にクリアする手段としても使う）
+export const disconnectEbay = async (environment: EbayEnvironment): Promise<void> => {
+  const response = await fetch(`${BACKEND_URL}/ebay/disconnect`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+    body: JSON.stringify({ environment }),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || 'eBay連携の解除に失敗しました');
+  }
+};
+
+// 10. 出荷元住所の状態を取得する。平文は含まず、マスクされたプレビュー(maskedPreview)+
+//     hasAddressのみ返る（平文の取得はrevealShippingAddress経由、パスワード再認証必須）
+export const getShippingAddressStatus = async (): Promise<ShippingAddressStatus> => {
+  const response = await fetch(`${BACKEND_URL}/settings/shipping-address`, { headers: await authHeaders() });
+  if (!response.ok) {
+    throw new Error('出荷元住所の取得に失敗しました');
+  }
+  return await response.json();
+};
+
+// 10b. パスワードを再入力して平文の住所を取得する（設定タブの「表示/編集する」ボタンから使用）
+export const revealShippingAddress = async (password: string): Promise<ShippingAddress | null> => {
+  const response = await fetch(`${BACKEND_URL}/settings/shipping-address/reveal`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+    body: JSON.stringify({ password }),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || 'パスワードの確認に失敗しました');
+  }
+  const data = await response.json();
+  return data.address;
+};
+
+// 11. 出荷元住所（ユーザーごと）を保存する。「eBayでログイン」より先に設定しておく必要がある
+export const saveShippingAddress = async (address: ShippingAddress): Promise<void> => {
+  const response = await fetch(`${BACKEND_URL}/settings/shipping-address`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+    body: JSON.stringify(address),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || '出荷元住所の保存に失敗しました');
+  }
+};
+
+// 12. 出荷元住所（ユーザーごと）を削除する（データ最小化のため、不要になったら消せるようにする）
+export const deleteShippingAddress = async (): Promise<void> => {
+  const response = await fetch(`${BACKEND_URL}/settings/shipping-address`, {
+    method: 'DELETE',
+    headers: await authHeaders(),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || '出荷元住所の削除に失敗しました');
+  }
+};
+
+// 13. AI解析結果のタイトル等からeBayカテゴリー候補を検索する（自動確定はせずユーザーに選ばせる）
+export const getCategorySuggestions = async (query: string): Promise<CategorySuggestion[]> => {
+  const response = await fetch(`${BACKEND_URL}/ebay/category-suggestions?q=${encodeURIComponent(query)}`, {
+    headers: await authHeaders(),
+  });
+  if (!response.ok) return [];
+  const data = await response.json();
+  return data.suggestions || [];
+};
+
+// 14. 選択中カテゴリーのItem Specifics定義（必須項目・選択肢）を取得する
+export const getCategoryAspects = async (categoryId: string): Promise<CategoryAspectDef[]> => {
+  const response = await fetch(`${BACKEND_URL}/ebay/category-aspects?categoryId=${encodeURIComponent(categoryId)}`, {
+    headers: await authHeaders(),
+  });
+  if (!response.ok) return [];
+  const data = await response.json();
+  return data.aspects || [];
+};
+
+// 15. 出品をキャンセルする（withdrawOffer。再出品可能な形で出品を終了する）
+export const cancelListing = async (listingId: string): Promise<void> => {
+  const response = await fetch(`${BACKEND_URL}/listings/${encodeURIComponent(listingId)}/cancel`, {
+    method: 'POST',
+    headers: await authHeaders(),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || '出品キャンセルに失敗しました');
+  }
+};
+
+// 16. 手動で「売却済み」としてマークする（eBay側は変更せず、アプリ内の記録のみ更新）
+export const markListingSold = async (listingId: string): Promise<void> => {
+  const response = await fetch(`${BACKEND_URL}/listings/${encodeURIComponent(listingId)}/mark-sold`, {
+    method: 'POST',
+    headers: await authHeaders(),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || '売却済みマークに失敗しました');
+  }
+};
+
+// 17. 公開中の出品の在庫数を変更する
+export const updateListingQuantity = async (listingId: string, quantity: number): Promise<void> => {
+  const response = await fetch(`${BACKEND_URL}/listings/${encodeURIComponent(listingId)}/quantity`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+    body: JSON.stringify({ quantity }),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || '在庫数の変更に失敗しました');
   }
 };

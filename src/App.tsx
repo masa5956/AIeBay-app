@@ -1,13 +1,21 @@
-import React, { lazy, Suspense, useEffect, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import type { TabType, RecentListing, SalesSummary } from './types/app';
 import type { ProductData } from './types/listing';
-import { analyzeImageWithAI, getListings, mockAnalyzeImage, publishToEbay } from './services/listingService';
+import {
+  analyzeImageWithAI,
+  getCategoryAspects,
+  getCategorySuggestions,
+  getListings,
+  mockAnalyzeImage,
+  publishToEbay,
+} from './services/listingService';
 import { supabase, isSupabaseConfigured } from './services/supabaseClient';
+import { isAspectRequired } from './utils/productAspects';
 import AuthScreen from './components/AuthScreen';
 import BottomNav from './components/BottomNav';
 import Toast, { type Feedback } from './components/Toast';
-import CancelConfirmDialog from './components/CancelConfirmDialog';
+import ConfirmDialog from './components/ConfirmDialog';
 import StepperHeader from './components/StepperHeader';
 import HomeDashboard from './components/HomeDashboard';
 import AllListingsScreen from './components/AllListingsScreen';
@@ -51,6 +59,11 @@ export default function App() {
   const [productData, setProductData] = useState<ProductData | null>(null);
   // 現在の出品案に使っている元画像ファイル一式（追加撮影時に再解析するため保持しておく）
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  // カテゴリー別必須Item Specifics取得中かどうか（Step2でのローディング表示用）。
+  // 素早く連続でカテゴリーを選び直した場合、古いリクエストの結果が後から返ってきて新しい選択を
+  // 上書きしないよう、常に「直近のリクエストか」をこのrefで確認してから状態に反映する
+  const [isFetchingCategoryAspects, setIsFetchingCategoryAspects] = useState(false);
+  const categoryRequestIdRef = useRef(0);
   const MAX_PHOTOS = 8; // /api/analyze-imageのMAX_ANALYZE_IMAGESと合わせる
   // 完了・失敗トースト通知
   const [feedback, setFeedback] = useState<Feedback | null>(null);
@@ -120,6 +133,13 @@ export default function App() {
       setSelectedFiles(files);
       setProductData(result);
       setStep(2);
+      // カテゴリー候補をバックグラウンドで取得（解析結果の表示自体はブロックしない）。
+      // 誤ったカテゴリーが必須項目検証を静かに壊すため、自動確定はせず必ずStep2でユーザーに選ばせる
+      getCategorySuggestions(result.title)
+        .then((categorySuggestions) => {
+          setProductData((prev) => (prev ? { ...prev, categorySuggestions } : prev));
+        })
+        .catch(() => {});
     } catch (err) {
       setFeedback({ type: 'error', message: 'AI解析に失敗しました' });
     } finally {
@@ -152,6 +172,66 @@ export default function App() {
     const updatedAspects = [...productData.aspects];
     updatedAspects[index] = { ...updatedAspects[index], value };
     setProductData({ ...productData, aspects: updatedAspects });
+  };
+
+  // ユーザーがカテゴリー候補から1つ選択・確定する。選択中カテゴリーの必須Item Specificsを取得し、
+  // まだ入力欄が無い必須項目は空値で追加する（Taxonomy取得に失敗してもカテゴリー選択自体は確定させる）。
+  // 「必須」かどうかはaspect側には保存せず、常にcategoryAspectDefsから都度算出する
+  // （isAspectRequired、src/utils/productAspects.ts）ため、カテゴリーを切り替えても
+  // 前のカテゴリーの必須フラグが残ることはない。
+  const selectCategory = async (categoryId: string, categoryName: string) => {
+    const requestId = ++categoryRequestIdRef.current;
+    setIsFetchingCategoryAspects(true);
+    let categoryAspectDefs: ProductData['categoryAspectDefs'] = [];
+    try {
+      categoryAspectDefs = await getCategoryAspects(categoryId);
+    } catch {
+      categoryAspectDefs = [];
+    } finally {
+      // 自分より後に発行されたリクエストが既にある場合、ローディング状態はそちらに任せる
+      if (requestId === categoryRequestIdRef.current) setIsFetchingCategoryAspects(false);
+    }
+    // 待っている間に別のカテゴリーが選ばれていたら、この（古い）結果は反映しない
+    if (requestId !== categoryRequestIdRef.current) return;
+
+    setProductData((prev) => {
+      if (!prev) return prev;
+      const existingKeys = new Set(prev.aspects.map((a) => a.key.toLowerCase()));
+      const missingRequired = (categoryAspectDefs || [])
+        .filter((d) => d.required && !existingKeys.has(d.name.toLowerCase()))
+        .map((d) => ({ key: d.name, value: '' }));
+      return {
+        ...prev,
+        categoryId,
+        categoryName,
+        categoryAspectDefs,
+        aspects: [...prev.aspects, ...missingRequired],
+      };
+    });
+  };
+
+  // 商品仕様(Item Specifics)を新規に1件追加する（要望の「追加」タブ相当）。重複キーは拒否する
+  const addAspect = (key: string, value: string) => {
+    if (!productData) return;
+    const trimmedKey = key.trim();
+    if (!trimmedKey) return;
+    const isDuplicate = productData.aspects.some((a) => a.key.toLowerCase() === trimmedKey.toLowerCase());
+    if (isDuplicate) {
+      setFeedback({ type: 'error', message: `「${trimmedKey}」は既に追加されています` });
+      return;
+    }
+    setProductData({
+      ...productData,
+      aspects: [...productData.aspects, { key: trimmedKey, value }],
+    });
+  };
+
+  // 商品仕様(Item Specifics)を1件削除する。選択中カテゴリーで必須の項目は削除できない
+  const removeAspect = (index: number) => {
+    if (!productData) return;
+    const target = productData.aspects[index];
+    if (!target || isAspectRequired(productData.categoryAspectDefs, target.key)) return;
+    setProductData({ ...productData, aspects: productData.aspects.filter((_, i) => i !== index) });
   };
 
   // 出品処理
@@ -222,14 +302,21 @@ export default function App() {
           overflow-y-autoに任せ、枠自体はoverflow-hiddenでページ全体のスクロールを防ぐ */}
       <div className="w-full max-w-md bg-slate-50 text-slate-800 h-screen h-dvh flex flex-col relative shadow-2xl overflow-hidden">
         <Toast feedback={feedback} onClose={() => setFeedback(null)} />
-        <CancelConfirmDialog
+        <ConfirmDialog
           open={isCancelConfirmOpen}
+          title="出品作業をキャンセルしますか？"
+          body="入力した内容は破棄されます"
+          confirmLabel="キャンセルする"
           onDismiss={() => setIsCancelConfirmOpen(false)}
           onConfirm={cancelListing}
         />
         {selectedListingId && (
           <Suspense fallback={null}>
-            <ListingDetailModal listingId={selectedListingId} onClose={() => setSelectedListingId(null)} />
+            <ListingDetailModal
+              listingId={selectedListingId}
+              onClose={() => setSelectedListingId(null)}
+              onListingChanged={refreshListings}
+            />
           </Suspense>
         )}
 
@@ -263,6 +350,10 @@ export default function App() {
                 productData={productData}
                 onChange={setProductData}
                 onUpdateAspect={updateAspectValue}
+                onAddAspect={addAspect}
+                onRemoveAspect={removeAspect}
+                onSelectCategory={selectCategory}
+                isFetchingCategoryAspects={isFetchingCategoryAspects}
                 onAddPhotos={handleAddPhotos}
                 canAddMorePhotos={selectedFiles.length < MAX_PHOTOS}
                 onBack={() => goToStep(1)}

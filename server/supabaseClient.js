@@ -13,4 +13,13 @@ export const supabase =
     ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
     : null;
 
+// 住所再表示のパスワード再認証(POST /api/settings/shipping-address/reveal)専用。
+// anon/publishableキーは公開して安全な設計のためservice_roleとは別に持つ意味がある——
+// signInWithPasswordによる「このパスワードは正しいか」の検証だけに使い、RLSがdeny-allの
+// ためこのクライアントではどのテーブルへもアクセスできない（データ読み書きは常にservice_role経由）。
+export const supabaseAnon =
+  process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY
+    ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY)
+    : null;
+
 export const PRODUCT_IMAGES_BUCKET = 'product-images';

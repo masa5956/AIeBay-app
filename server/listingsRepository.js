@@ -1,12 +1,30 @@
 import { supabase } from './supabaseClient.js';
 
-// 出品成功時にlistingsテーブルへ1件保存する（ログイン中のユーザーに紐づける）
-export async function saveListing({ userId, sku, listingId, title, price, imageUrl, category, description, aspects }) {
+// 出品成功時にlistingsテーブルへ1件保存する（ログイン中のユーザーに紐づける）。
+// offerId/quantity/formatは出品キャンセル・在庫数変更（withdrawOffer/bulk_update_price_quantity）に
+// 必要なため、publish-ebayでの出品直後にここで初めて永続化する（従来はofferIdを保存していなかった）。
+export async function saveListing({
+  userId,
+  sku,
+  listingId,
+  offerId,
+  quantity,
+  format,
+  title,
+  price,
+  imageUrl,
+  category,
+  description,
+  aspects,
+}) {
   if (!supabase) return; // Supabase未設定時は履歴保存をスキップ（出品自体は成功させる）
   const { error } = await supabase.from('listings').insert({
     user_id: userId,
     sku,
     listing_id: listingId,
+    offer_id: offerId || null,
+    quantity: Number.isInteger(quantity) ? quantity : 1,
+    listing_format: format || 'FIXED_PRICE',
     title,
     price,
     status: 'ACTIVE',
@@ -15,6 +33,30 @@ export async function saveListing({ userId, sku, listingId, title, price, imageU
     description: description || null,
     aspects: aspects || null,
   });
+  if (error) throw error;
+}
+
+// 出品のステータスを更新する（'ACTIVE' → 'CANCELLED' | 'SOLD'）。
+// 挿入時に常にACTIVEで固定されていた従来の仕様に対し、初めてのステータス遷移の仕組みとなる。
+// 所有権はuser_id一致でのみ更新対象にする（他ユーザーのlisting_idを推測されても更新できないように）。
+export async function updateListingStatus(userId, listingId, status) {
+  if (!supabase) return;
+  const { error } = await supabase
+    .from('listings')
+    .update({ status })
+    .eq('user_id', userId)
+    .eq('listing_id', listingId);
+  if (error) throw error;
+}
+
+// 出品の在庫数（quantity列）を更新する（eBay側のbulk_update_price_quantity呼び出しと対にして使う）
+export async function updateListingQuantity(userId, listingId, quantity) {
+  if (!supabase) return;
+  const { error } = await supabase
+    .from('listings')
+    .update({ quantity })
+    .eq('user_id', userId)
+    .eq('listing_id', listingId);
   if (error) throw error;
 }
 

@@ -50,6 +50,19 @@ export async function setEbayConnection(
   if (error) throw error;
 }
 
+// 設定タブの「eBay連携を解除する」から、ユーザー自身が特定環境の接続情報を削除する。
+// 壊れたmerchant_location_key等の古い接続情報を、再接続前に確実にクリアする手段として使う
+// （upsertのgetUserAccessTokenを含む出品フローは行わず、単純に行を消すだけ）。
+export async function deleteEbayConnection(userId, environment) {
+  if (!supabase || !userId || !environment) return;
+  const { error } = await supabase
+    .from('ebay_connections')
+    .delete()
+    .eq('user_id', userId)
+    .eq('environment', environment);
+  if (error) throw error;
+}
+
 // eBayのMarketplace Account Deletion/Closure通知を受信した際、そのeBayユーザー名に紐づく
 // 接続情報（refresh_token等）を完全に削除し、連携を解除する（該当eBayアカウントを接続していた
 // 全アプリユーザー・全環境分が対象。以後そのアカウントでは出品できなくなり、再接続するには
