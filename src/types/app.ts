@@ -9,7 +9,7 @@ export interface ResearchCategoryDef {
   isCustom: boolean;
 }
 
-// リサーチタブ: ニュースAPI(Currents API)から取得した記事1件
+// リサーチタブ: ニュースAPI(Serper.dev、Googleニュースの検索結果)から取得した記事1件
 export interface ResearchArticle {
   title: string;
   link: string;

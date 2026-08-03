@@ -5,10 +5,14 @@ import { searchResearchArticles } from '../services/listingService';
 
 // アプリ標準の固定カテゴリ（削除不可）。カテゴリを増やしたい場合はここに1件追加するだけでよい
 // （バックエンドはキーワード検索のみを行い、カテゴリという概念自体はフロントエンドの表示上のラベル付け）。
+// Currents APIのkeywordsパラメータはブール演算子(OR/AND)を解釈しない単純な語句検索のため、
+// 以前の"コスメ 新作 OR 新色"のような書き方は「OR」という文字列自体が検索語に含まれてしまい、
+// 3カテゴリとも一致件数がほぼ0件になる→結果的にどのカテゴリも同じような（乏しい）結果に
+// 見えるという不具合の原因だった。単純な単語のみにして各カテゴリを明確に区別する。
 const DEFAULT_CATEGORIES: ResearchCategoryDef[] = [
-  { key: 'cosmetics', label: 'コスメ', query: 'コスメ 新作 OR 新色 OR 新発売', isCustom: false },
-  { key: 'games', label: 'ゲーム', query: 'ゲーム 発売 OR 新作', isCustom: false },
-  { key: 'gadgets', label: 'ガジェット', query: 'ガジェット 新製品 OR 新発売', isCustom: false },
+  { key: 'cosmetics', label: 'コスメ', query: 'コスメ', isCustom: false },
+  { key: 'games', label: 'ゲーム', query: 'ゲーム', isCustom: false },
+  { key: 'gadgets', label: 'ガジェット', query: 'ガジェット', isCustom: false },
 ];
 
 const CUSTOM_CATEGORIES_STORAGE_KEY = 'ebay-ai-lister-research-custom-categories';
