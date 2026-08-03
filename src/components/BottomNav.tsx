@@ -1,4 +1,4 @@
-import { Home, BarChart2, Settings } from 'lucide-react';
+import { Home, Newspaper, BarChart2, Settings } from 'lucide-react';
 import type { TabType } from '../types/app';
 
 interface BottomNavProps {
@@ -10,6 +10,7 @@ interface BottomNavProps {
 export default function BottomNav({ activeTab, onChangeTab }: BottomNavProps) {
   const items: { tab: TabType; label: string; Icon: typeof Home }[] = [
     { tab: 'home', label: 'ホーム', Icon: Home },
+    { tab: 'research', label: 'リサーチ', Icon: Newspaper },
     { tab: 'analytics', label: '分析', Icon: BarChart2 },
     { tab: 'settings', label: '設定', Icon: Settings },
   ];

@@ -29,6 +29,7 @@ import { saveListing, getRecentListings, getAllListings, getSalesSummary, getAna
 import { removeOutliersByIQR } from './priceStats.js';
 import { createOAuthState, consumeOAuthState } from './oauthStateStore.js';
 import { verifyEbayNotificationSignature } from './ebayNotificationVerifier.js';
+import { getResearchArticles, RESEARCH_CATEGORIES } from './researchFeeds.js';
 
 dotenv.config();
 
@@ -582,6 +583,24 @@ app.get('/api/listings/search', requireAuth, async (req, res) => {
   } catch (error) {
     console.error('出品検索に失敗しました:', error);
     return res.status(500).json({ error: '出品検索に失敗しました。' });
+  }
+});
+
+// =================================================================
+// リサーチタブ: カテゴリ別の最新記事一覧取得エンドポイント
+// AI呼び出しは行わず、カテゴリごとのRSSフィードを取得・マージして返す（無料・レート制限なし）
+// =================================================================
+app.get('/api/research/articles', requireAuth, async (req, res) => {
+  try {
+    const category = String(req.query.category || '');
+    if (!RESEARCH_CATEGORIES.includes(category)) {
+      return res.status(400).json({ error: '未対応のカテゴリです。' });
+    }
+    const articles = await getResearchArticles(category);
+    return res.json({ articles });
+  } catch (error) {
+    console.error('リサーチ記事の取得に失敗しました:', error);
+    return res.status(500).json({ error: 'リサーチ記事の取得に失敗しました。' });
   }
 });
 

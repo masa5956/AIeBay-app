@@ -1,4 +1,15 @@
-export type TabType = 'home' | 'analytics' | 'settings';
+export type TabType = 'home' | 'research' | 'analytics' | 'settings';
+
+// リサーチタブ: 対応カテゴリ
+export type ResearchCategory = 'cosmetics' | 'games' | 'gadgets';
+
+// リサーチタブ: RSSフィードから取得した記事1件
+export interface ResearchArticle {
+  title: string;
+  link: string;
+  pubDate: string;
+  source: string;
+}
 
 export type EbayEnvironment = 'SANDBOX' | 'PRODUCTION';
 

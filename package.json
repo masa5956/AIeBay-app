@@ -23,7 +23,8 @@
     "multer": "^2.2.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "recharts": "^2.12.2"
+    "recharts": "^2.12.2",
+    "rss-parser": "^3.13.0"
   },
   "devDependencies": {
     "@types/react": "^18.2.66",

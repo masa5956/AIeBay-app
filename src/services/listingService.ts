@@ -1,5 +1,14 @@
 import type { CompetitorSuggestions, ConditionAssessment, MarketTrend, ProductAspect, ProductData } from '../types/listing';
-import type { AnalyticsData, EbayEnvironment, EbayStatus, ListingDetail, RecentListing, SalesSummary } from '../types/app';
+import type {
+  AnalyticsData,
+  EbayEnvironment,
+  EbayStatus,
+  ListingDetail,
+  RecentListing,
+  ResearchArticle,
+  ResearchCategory,
+  SalesSummary,
+} from '../types/app';
 import { mockProductData } from '../mock/mockData';
 import { supabase } from './supabaseClient';
 
@@ -182,6 +191,18 @@ export const searchListings = async (query: string): Promise<RecentListing[]> =>
   }
   const data = await response.json();
   return data.listings;
+};
+
+// 4c. リサーチタブ向け: カテゴリ別の最新記事一覧を取得する（RSSフィードベース、AI呼び出しなし）
+export const getResearchArticles = async (category: ResearchCategory): Promise<ResearchArticle[]> => {
+  const response = await fetch(`${BACKEND_URL}/research/articles?category=${encodeURIComponent(category)}`, {
+    headers: await authHeaders(),
+  });
+  if (!response.ok) {
+    throw new Error('リサーチ記事の取得に失敗しました');
+  }
+  const data = await response.json();
+  return data.articles;
 };
 
 // 5. 分析タブ向けの月別出品額推移・カテゴリ別出品額構成をバックエンド(DB)から取得する

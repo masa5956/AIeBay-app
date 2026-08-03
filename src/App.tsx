@@ -16,6 +16,7 @@ import Step1_ImageUpload from './components/Step1_ImageUpload';
 import Step2_MetadataEdit from './components/Step2_MetadataEdit';
 import Step3_Pricing from './components/Step3_Pricing';
 import Step4_Preview from './components/Step4_Preview';
+import ResearchPanel from './components/ResearchPanel';
 
 // rechartsを含み重いため、分析タブを開くまでJSを読み込まない（初期バンドルサイズ削減）
 const AnalyticsPanel = lazy(() => import('./components/AnalyticsPanel'));
@@ -297,6 +298,7 @@ export default function App() {
                 onViewAllListings={() => setShowAllListings(true)}
               />
             )}
+            {activeTab === 'research' && <ResearchPanel />}
             {activeTab === 'analytics' && (
               <Suspense
                 fallback={
