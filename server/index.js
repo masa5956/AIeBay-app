@@ -55,6 +55,14 @@ dotenv.config();
 
 const app = express();
 
+// Renderのようなリバースプロキシ配下では、実際のクライアントIPは`X-Forwarded-For`ヘッダー経由で
+// 渡ってくる。この設定が無いとExpressはそのヘッダーを信用せず`req.ip`が常にプロキシ自身のIPに
+// なってしまい、express-rate-limitが「全リクエストが同一IPからのもの」として扱いレート制限が
+// 意味をなさなくなる（起動時にERR_ERL_UNEXPECTED_X_FORWARDED_FORの警告が出る）。
+// `1`はプロキシの直前1ホップ分のみを信頼する設定（`true`のようにチェーン全体を信用すると、
+// クライアントが自分でX-Forwarded-Forを偽装できてしまうため、必要最小限の値にする）。
+app.set('trust proxy', 1);
+
 // フロントエンドの実オリジンのみ許可する（未指定だと任意サイトからのCORSリクエストを許してしまうため）。
 // Vercelはブランチ・プレビューごとに別URL（https://a-ie-bay-app-git-<branch>-<team>.vercel.app等）を
 // 自動生成し事前に固定できないため、このプロジェクト名で始まる*.vercel.appドメインは正規表現で
